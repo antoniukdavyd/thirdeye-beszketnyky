@@ -158,10 +158,31 @@ class DeepgramVoiceSession:
     def request_ptt_barge_in(self) -> None:
         stop_speaking()
         with self._play_lock:
+            if self.active:
+                self.mic_gate.arm()
+                self._listen_deadline = (
+                    time.monotonic() + LISTEN_TIMEOUT_SECONDS
+                )
             self._play_buf.clear()
             self._audio_done = False
-        self.arm_listen()
+            if self.active:
+                self._set_state(RealtimeState.LISTENING)
         log("realtime", "PTT barge-in")
+
+    def _queue_assistant_audio(self, pcm: bytes) -> bool:
+        """Queue assistant PCM only when no user listening turn is armed."""
+        if not pcm:
+            return False
+        with self._play_lock:
+            if self.mic_gate.armed:
+                self._play_buf.clear()
+                self._audio_done = False
+                return False
+            self.mic_gate.disarm()
+            self._audio_done = False
+            self._play_buf.extend(pcm)
+            self._set_state(RealtimeState.SPEAKING)
+        return True
 
     def tick(self) -> None:
         return
@@ -263,8 +284,13 @@ class DeepgramVoiceSession:
             needed = frames * 2
             drained = False
             with self._play_lock:
-                chunk = bytes(self._play_buf[:needed])
-                del self._play_buf[:needed]
+                if self.mic_gate.armed:
+                    self._play_buf.clear()
+                    self._audio_done = False
+                    chunk = b""
+                else:
+                    chunk = bytes(self._play_buf[:needed])
+                    del self._play_buf[:needed]
                 if self._audio_done and not self._play_buf:
                     self._audio_done = False
                     drained = True
@@ -353,11 +379,7 @@ class DeepgramVoiceSession:
         )
 
         if isinstance(message, bytes):
-            if message:
-                with self._play_lock:
-                    self._audio_done = False
-                    self._play_buf.extend(message)
-                self._set_state(RealtimeState.SPEAKING)
+            self._queue_assistant_audio(message)
             return
         if isinstance(message, AgentV1ConversationText) and message.role == "user":
             self.disarm_listen()
