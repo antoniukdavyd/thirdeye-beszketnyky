@@ -2,7 +2,7 @@
 
 **Date:** 2026-10-04  
 **Scope:** Mac + iPhone Record3D LiDAR; English primary; cane users; spatial orientation  
-**Status:** Design approved in conversation — replaces Gemini Live as the voice path  
+**Status:** Implementation done (Slice A on `feat/third-eye-voice-mvp`) — manual outdoor walk acceptance pending; post-TTS ~700 ms cooldown not implemented  
 **Supersedes (voice path):** Gemini Live channel in `2026-10-03-agent-realtime-design.md`  
 **Related:** passive beeps / SceneStore concepts from prior agent-realtime + voice-control specs
 
@@ -176,4 +176,4 @@ Missing Deepgram key → voice path off; keyboard tools may still work. Missing 
 
 ## 11. Implementation note
 
-Next step after spec approval: implementation plan via writing-plans (replace Gemini Live channel with Deepgram STT/TTS + OpenRouter agent loop; keep SceneStore/tools/beeps).
+Implemented on branch `feat/third-eye-voice-mvp` (Tasks 1–7): Deepgram Voice Agent + OpenRouter think, PTT mic gate, ToolRegistry dispatch, README/env. See plan `docs/superpowers/plans/2026-10-04-third-eye-voice-hazards-mvp.md`.
