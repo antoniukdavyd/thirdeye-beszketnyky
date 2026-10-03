@@ -9,4 +9,4 @@ pillow>=10.0
 torch>=2.0
 pytest>=8.0
 edge-tts>=6.1
-deepgram-sdk>=5.0
+deepgram-sdk>=7,<8

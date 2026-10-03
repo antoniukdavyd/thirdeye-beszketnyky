@@ -12,6 +12,8 @@ from ..llm.openrouter import OpenRouterClient, _clip_spoken
 from ..perception.scene import compact_scene_for_llm
 from ..perception.scene_store import SceneStore
 
+SCENE_STALE_MS = 1500
+
 # label aliases: user/agent string → YOLO substrings
 _LABEL_ALIASES = {
     "person": ("person",),
@@ -192,6 +194,8 @@ class ToolRegistry:
         snap = self.store.snapshot(copy_rgb=False)
         if not snap.has_frame:
             return {"ok": False, "error": "No frame"}
+        if snap.age_ms > SCENE_STALE_MS:
+            return {"ok": False, "error": "No current camera frame"}
         data = compact_scene_for_llm(snap.scene)
         data["objects"] = (data.get("objects") or [])[:8]
         spoken = self._spoken_distances(data, target=None)
@@ -206,6 +210,8 @@ class ToolRegistry:
         snap = self.store.snapshot(copy_rgb=False)
         if not snap.has_frame:
             return {"ok": False, "error": "No frame"}
+        if snap.age_ms > SCENE_STALE_MS:
+            return {"ok": False, "error": "No current camera frame"}
         data = compact_scene_for_llm(snap.scene)
         target = (args.get("target") or "").strip() or None
         if target:
@@ -238,6 +244,8 @@ class ToolRegistry:
         snap = self.store.snapshot(copy_rgb=False)
         if not snap.has_frame:
             return {"ok": False, "error": "No frame"}
+        if snap.age_ms > SCENE_STALE_MS:
+            return {"ok": False, "error": "No current camera frame"}
         data = compact_scene_for_llm(snap.scene)
         labs = _match_labels(label)
         hits = [
@@ -274,6 +282,8 @@ class ToolRegistry:
         snap = self.store.snapshot(copy_rgb=True)
         if not snap.has_frame or snap.rgb_bgr is None:
             return {"ok": False, "error": "No frame"}
+        if snap.age_ms > SCENE_STALE_MS:
+            return {"ok": False, "error": "No current camera frame"}
         focus = (args.get("focus") or "").strip()
         q = focus or "Describe the scene in front of the user."
         text = self.llm.describe(

@@ -101,6 +101,7 @@ class DeepgramVoiceSession:
         self._play_lock = threading.Lock()
         self._audio_done = False
         self._last_phrase = ""
+        self._failure_announced = False
 
     @property
     def available(self) -> bool:
@@ -138,6 +139,7 @@ class DeepgramVoiceSession:
             speak("Realtime unavailable. Check Deepgram and OpenRouter API keys.")
             return
         self._stop.clear()
+        self._failure_announced = False
         self.mic_gate.disarm()
         self._session_active = True
         self._set_state(RealtimeState.CONNECTING)
@@ -213,10 +215,22 @@ class DeepgramVoiceSession:
             asyncio.run(self._main())
         except Exception as exc:
             log_exc("realtime", "Deepgram session failed", exc)
+            self._fail_session("Speech is down, try again.")
         finally:
             self._session_active = False
             self.mic_gate.disarm()
             self._set_state(RealtimeState.IDLE)
+
+    def _fail_session(self, phrase: str) -> None:
+        """Close the failed voice turn and announce it at most once."""
+        self._stop.set()
+        self._session_active = False
+        self.mic_gate.disarm()
+        self._listen_deadline = None
+        self._set_state(RealtimeState.IDLE)
+        if not self._failure_announced:
+            self._failure_announced = True
+            speak(phrase)
 
     def _settings(self):
         from deepgram.agent.v1.types import (
@@ -395,12 +409,25 @@ class DeepgramVoiceSession:
             AgentV1AgentAudioDone,
             AgentV1AgentThinking,
             AgentV1ConversationText,
+            AgentV1Error,
             AgentV1FunctionCallRequest,
             AgentV1SendFunctionCallResponse,
         )
 
         if isinstance(message, bytes):
             self._queue_assistant_audio(message)
+            return
+        if isinstance(message, AgentV1Error):
+            detail = f"{message.code} {message.description}".lower()
+            thinking_failed = any(
+                term in detail
+                for term in ("openrouter", "llm", "completion", "think")
+            )
+            self._fail_session(
+                "I can't think right now."
+                if thinking_failed
+                else "Speech is down, try again."
+            )
             return
         if isinstance(message, AgentV1ConversationText) and message.role == "user":
             self.disarm_listen()

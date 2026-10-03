@@ -1,3 +1,7 @@
+import asyncio
+
+from deepgram.agent.v1.types import AgentV1Error
+
 from assist.channel.deepgram_agent import (
     DeepgramVoiceSession,
     MicGate,
@@ -49,3 +53,42 @@ def test_ptt_barge_in_clears_playback_and_returns_to_listening(monkeypatch):
     assert session._audio_done is False
     assert session.mic_gate.armed is True
     assert session.state == RealtimeState.LISTENING
+
+
+def test_run_loop_speaks_when_session_fails(monkeypatch):
+    spoken = []
+    session = DeepgramVoiceSession(tools=None, enable=False)
+    session._session_active = True
+    session.mic_gate.arm()
+    monkeypatch.setattr(
+        "assist.channel.deepgram_agent.asyncio.run",
+        lambda coro: (coro.close(), (_ for _ in ()).throw(OSError("offline")))[1],
+    )
+    monkeypatch.setattr("assist.channel.deepgram_agent.speak", spoken.append)
+
+    session._run_loop()
+
+    assert spoken == ["Speech is down, try again."]
+    assert session.active is False
+    assert session.mic_gate.armed is False
+    assert session.state == RealtimeState.IDLE
+
+
+def test_agent_error_speaks_and_ends_session(monkeypatch):
+    spoken = []
+    session = DeepgramVoiceSession(tools=None, enable=False)
+    session._session_active = True
+    session.mic_gate.arm()
+    monkeypatch.setattr("assist.channel.deepgram_agent.speak", spoken.append)
+    error = AgentV1Error(
+        code="OPENROUTER_ERROR",
+        description="OpenRouter completion failed",
+    )
+
+    asyncio.run(session._handle_message(None, error))
+
+    assert spoken == ["I can't think right now."]
+    assert session._stop.is_set()
+    assert session.active is False
+    assert session.mic_gate.armed is False
+    assert session.state == RealtimeState.IDLE

@@ -76,6 +76,23 @@ def test_measure_no_invent_without_frame():
     assert not out["ok"]
 
 
+@pytest.mark.parametrize(
+    ("name", "args"),
+    [
+        ("sense_snapshot", {}),
+        ("measure_distances", {}),
+        ("find_object", {"label": "person"}),
+        ("describe_scene", {}),
+    ],
+)
+def test_tools_reject_stale_camera_frame(store, name, args):
+    store._updated_at = time.monotonic() - 1.501
+
+    out = ToolRegistry(store).execute(name, args)
+
+    assert out == {"ok": False, "error": "No current camera frame"}
+
+
 def test_find_object_door_missing(store):
     reg = ToolRegistry(store)
     out = reg.execute("find_object", {"label": "дверь"})
