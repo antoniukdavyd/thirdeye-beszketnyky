@@ -20,7 +20,7 @@ from ..agent import (
     voice_ready,
 )
 from ..debuglog import log, log_exc
-from ..tools import ToolRegistry, deepgram_think_functions
+from ..tools import ToolRegistry, deepgram_think_functions, parse_tool_arguments
 from ..voice.audio import speak, stop_speaking
 
 INPUT_RATE = 16_000
@@ -55,6 +55,27 @@ class MicGate:
     def disarm(self) -> None:
         with self._lock:
             self._armed = False
+
+
+def dispatch_function_calls(tools: ToolRegistry, calls: list) -> list[dict]:
+    responses = []
+    for call in calls:
+        if getattr(call, "client_side", True) is False:
+            continue
+        name = call.name
+        t0 = time.monotonic()
+        args = parse_tool_arguments(getattr(call, "arguments", {}) or {})
+        result = tools.execute(name, args)
+        dt = (time.monotonic() - t0) * 1000.0
+        log("tool_call", name, ms=round(dt, 1))
+        responses.append(
+            {
+                "id": call.id,
+                "name": name,
+                "content": json.dumps(result, ensure_ascii=False),
+            }
+        )
+    return responses
 
 
 class DeepgramVoiceSession:
@@ -397,14 +418,25 @@ class DeepgramVoiceSession:
                 self._playback_drained()
             return
         if isinstance(message, AgentV1FunctionCallRequest):
-            content = json.dumps({"ok": False, "error": "tools not wired"})
-            for function in message.functions:
+            if self.tools is None:
+                responses = [
+                    {
+                        "id": function.id,
+                        "name": function.name,
+                        "content": json.dumps(
+                            {"ok": False, "error": "tools unavailable"},
+                            ensure_ascii=False,
+                        ),
+                    }
+                    for function in message.functions
+                ]
+            else:
+                responses = await asyncio.to_thread(
+                    dispatch_function_calls, self.tools, message.functions
+                )
+            for resp in responses:
                 await agent.send_function_call_response(
-                    AgentV1SendFunctionCallResponse(
-                        id=function.id,
-                        name=function.name,
-                        content=content,
-                    )
+                    AgentV1SendFunctionCallResponse(**resp)
                 )
 
     def _playback_drained(self) -> None:

@@ -5,6 +5,8 @@ from __future__ import annotations
 import os
 from typing import Any, Optional
 
+from .modes import Intent
+
 SYSTEM_INSTRUCTION = """You are Third Eye, a voice orientation assistant for a blind cane user (English).
 
 You are an extra pair of eyes on a neck-worn camera with LiDAR depth. Continuous hazard beeps are handled outside you — do not try to beep.
@@ -20,6 +22,7 @@ Rules:
 """
 
 __all__ = [
+    "Intent",
     "SYSTEM_INSTRUCTION",
     "deepgram_api_key",
     "openrouter_api_key",
