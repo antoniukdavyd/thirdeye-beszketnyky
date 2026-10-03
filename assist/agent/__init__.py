@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from typing import Any, Optional
+from typing import Optional
 
 from .modes import Intent
 
@@ -30,10 +30,6 @@ __all__ = [
     "deepgram_tts_model",
     "deepgram_stt_model",
     "voice_ready",
-    # Deprecated Gemini Live stubs (removed in Task 1; channel rewired later)
-    "live_model_name",
-    "google_api_key",
-    "build_live_config",
 ]
 
 
@@ -59,15 +55,3 @@ def deepgram_stt_model() -> str:
 
 def voice_ready() -> bool:
     return bool(deepgram_api_key() and openrouter_api_key())
-
-
-def live_model_name() -> str:
-    return "gemini-live-removed"
-
-
-def google_api_key() -> Optional[str]:
-    return None
-
-
-def build_live_config(registry: Any) -> dict[str, Any]:
-    raise RuntimeError("Gemini Live removed")
