@@ -46,22 +46,6 @@ class ZoneClearance:
             "right": fmt(self.right),
         }
 
-    def hint(self) -> str:
-        parts = []
-        c = self.center
-        if c is not None and c < ALERT_CENTER_M:
-            parts.append("center blocked")
-        if self.left is not None and self.left < ALERT_SIDE_M:
-            parts.append("left close")
-        if self.right is not None and self.right < ALERT_SIDE_M:
-            parts.append("right close")
-        if not parts:
-            if c is not None:
-                parts.append("path clearer" if c >= 1.5 else "path ok")
-            else:
-                parts.append("no depth")
-        return "; ".join(parts)
-
 
 class ZoneFilter:
     """EMA smoother for L/C/R clearances to reduce beep flicker."""

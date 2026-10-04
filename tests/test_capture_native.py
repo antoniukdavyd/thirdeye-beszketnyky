@@ -107,3 +107,43 @@ def test_reader_keeps_only_newest_frame(monkeypatch):
     finally:
         phone.close()
         reader.stop()
+
+
+def test_reader_reconnects_when_stream_goes_silent(monkeypatch, capsys):
+    rgb, depth, conf = _frame_inputs()
+    body = _message(rgb, depth, conf)
+    monkeypatch.setattr(native, "STALL_RECONNECT_SEC", 0.3)
+    monkeypatch.setattr(native, "RECONNECT_SEC", 0.05)
+    pairs = [socket.socketpair() for _ in range(2)]
+    connects = []
+    second_connect = threading.Event()
+
+    def fake_connect(_device_id, port=native.RECORD3D_PORT):
+        if len(connects) >= len(pairs):
+            raise ConnectionRefusedError("no more")
+        phone, mac = pairs[len(connects)]
+        connects.append(phone)
+        if len(connects) == 2:
+            second_connect.set()
+        return mac
+
+    monkeypatch.setattr(native, "connect_device", fake_connect)
+    stopped = []
+    reader = native.LatestFrameReader(device_id=1, on_stream_stopped=lambda: stopped.append(1))
+    reader.start()
+    try:
+        # One frame, then silence with the socket still open (stream stolen /
+        # Record3D paused): the reader must give up on it and reconnect.
+        for _ in range(50):
+            if connects:
+                break
+            threading.Event().wait(0.01)
+        connects[0].sendall(struct.pack(">IIII", 1, 101, 0, len(body)) + body)
+        assert second_connect.wait(3.0)
+        assert stopped == [1]
+        assert "Record3D sent nothing — reconnecting" in capsys.readouterr().out
+    finally:
+        reader.stop()
+        for phone, mac in pairs:
+            phone.close()
+            mac.close()

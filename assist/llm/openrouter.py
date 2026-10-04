@@ -13,6 +13,7 @@ import httpx
 import numpy as np
 
 from ..agent.modes import Intent
+from ..debuglog import log
 from ..perception.scene import compact_scene_for_llm
 
 SCENE_PROMPT = """You are an orientation assistant for a blind person.
@@ -22,6 +23,7 @@ SCENE mode:
 - Lead with the actionable part (what matters for walking: space type, path, key objects/people and their side).
 - Use left / center / right for sides.
 - No meters unless they are in SENSOR_JSON. Never invent objects or distances.
+- Path: follow SENSOR_JSON.hint. If it names something ahead, say that first, with its distance. Never say the path is clear.
 - No atmosphere, no long lists, skip trivial small items.
 """
 
@@ -241,6 +243,14 @@ class OpenRouterClient:
         objs = compact.get("objects") or []
         compact["objects"] = objs[:6]
         b64 = self._encode_jpeg(rgb_bgr)
+        # What the model is told, so a wrong answer can be traced to its input.
+        log(
+            "llm",
+            "describe request",
+            mode=mode.value,
+            q=user_question[:80],
+            sensor=json.dumps(compact, ensure_ascii=False),
+        )
         payload = {
             "model": self.model,
             "messages": [

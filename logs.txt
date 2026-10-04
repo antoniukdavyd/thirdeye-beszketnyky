@@ -1,57 +1,79 @@
+[nekit 07:51:13.204] crash | pid=1985 python=3.12.4 mac=14.5 rev=89facb1+dirty args=- log=/Users/petromelnyk/Downloads/nekit/logs/nekit-20261004-075113.log | session start
 Searching for devices...
 1 device(s) found
   [0] ID=4776  UDID=00008120-00190502368BC01E
 Record3D reader started.
-[nekit 06:48:07.131] frame | backend=native dev_idx=0 product_id=4776 | Record3D reader started
-[nekit 06:48:07.132] frame | device_id=3 | Record3D stream connected
-[nekit 06:48:07.228] app | assist starting
+[nekit 07:51:14.553] frame | backend=native dev_idx=0 product_id=4776 | Record3D reader started
+[nekit 07:51:14.554] frame | device_id=3 | Record3D stream connected
+[nekit 07:51:14.651] app | assist starting
 OpenRouter ready (openai/gpt-4o)
-[nekit 06:48:07.228] llm | model=openai/gpt-4o | OpenRouter ready
+[nekit 07:51:14.651] llm | model=openai/gpt-4o | OpenRouter ready
 Voice: Deepgram + OpenRouter — hold Space to talk (v=toggle).
-[nekit 06:48:07.228] realtime | space_hold=1 | Deepgram + OpenRouter enabled
+[nekit 07:51:14.651] realtime | space_hold=1 | Deepgram + OpenRouter enabled
   Logs: lines starting with [nekit ...] — copy those for debug.
+  Full session log (survives crashes): /Users/petromelnyk/Downloads/nekit/logs/nekit-20261004-075113.log
   Tip: click the OpenCV window so Space is tracked.
-[nekit 06:48:07.228] tts | provider=edge blocking=0 chars=15 local=1 | speak requested
-[nekit 06:48:07.228] realtime | prewarming Deepgram session
-[nekit 06:48:07.228] realtime | state → connecting
-[nekit 06:48:07.229] realtime | Deepgram session starting
+[nekit 07:51:14.652] tts | provider=edge blocking=0 chars=15 local=1 | speak requested
+[nekit 07:51:14.654] realtime | prewarming Deepgram session
+[nekit 07:51:14.655] realtime | state → connecting
+[nekit 07:51:14.665] realtime | Deepgram session starting
 [TTS/say] Samantha: 'Assistant ready'
-[nekit 06:48:07.236] tts | voice=Samantha text='Assistant ready' | say play start
-[nekit 06:48:07.242] frame | device=lidar rgb=1440x1920 depth=1440x1920 depth_dtype=float32 conf_dtype=uint8 K=1344,1344,724,959 | first frame
-[nekit 06:48:09.161] frame | phone_fps=59.400 rx_mbs=10.000 dropped=83 cap_fps=17.500 draw_fps=17.500 frames=35 wait_ms=0.000 grab_ms=26.100 zones_ms=4.800 publish_ms=0.200 draw_ms=7.000 show_ms=16.200 max_stage=grab:624ms valid_pct=100.000 d_min=0.053 d_med=0.262 d_max=0.822 conf_hi_pct=0.000 zones=-/-/- objs=0 | loop stats
-[nekit 06:48:09.492] tts | say play done
-[nekit 06:48:09.515] realtime | Deepgram websocket connected
-[nekit 06:48:09.516] realtime | agent welcome
-[nekit 06:48:09.817] realtime | settings applied — agent ready
-[nekit 06:48:09.818] realtime | state → idle
-[nekit 06:48:11.519] frame | phone_fps=52.200 rx_mbs=8.500 dropped=67 cap_fps=20.600 draw_fps=20.600 frames=84 wait_ms=0.000 grab_ms=21.800 zones_ms=3.400 publish_ms=0.100 draw_ms=7.000 show_ms=15.400 max_stage=grab:450ms valid_pct=100.000 d_min=1.628 d_med=4.961 d_max=5.953 conf_hi_pct=0.000 zones=-/-/- objs=0 | loop stats
-[nekit 06:48:11.532] beep | sr=44100.000 | tone stream open
+[nekit 07:51:14.669] tts | voice=Samantha text='Assistant ready' | say play start
+[nekit 07:51:14.693] frame | device=lidar rgb=1440x1920 depth=1440x1920 depth_dtype=float32 conf_dtype=uint8 K=1346,1346,725,958 | first frame
+[nekit 07:51:14.796] beep | sr=44100.000 | tone stream open
+[nekit 07:51:16.190] realtime | Deepgram websocket connected
+[nekit 07:51:16.192] realtime | agent welcome
+[nekit 07:51:16.484] realtime | settings applied — agent ready
+[nekit 07:51:16.484] realtime | state → idle
+[nekit 07:51:16.562] tts | say play done
+[nekit 07:51:16.593] frame | phone_fps=30.000 rx_mbs=3.900 dropped=25 cap_fps=17.200 draw_fps=17.200 det_fps=0.000 frames=35 wait_ms=0.000 grab_ms=12.100 zones_ms=12.400 publish_ms=2.200 draw_ms=9.100 show_ms=18.500 max_stage=publish:70ms valid_pct=100.000 d_min=0.208 d_med=0.409 d_max=3.451 conf_hi_pct=54.900 zones=0.42/0.39/0.38 objs=0 | loop stats
+[nekit 07:51:18.619] frame | phone_fps=30.200 rx_mbs=5.500 dropped=12 cap_fps=24.200 draw_fps=24.200 det_fps=0.000 frames=84 wait_ms=0.200 grab_ms=8.400 zones_ms=6.600 publish_ms=0.100 draw_ms=4.100 show_ms=21.700 max_stage=show:377ms valid_pct=100.000 d_min=0.162 d_med=0.328 d_max=3.529 conf_hi_pct=66.800 zones=0.33/0.33/0.32 objs=0 | loop stats
 YOLO-World loaded: yolov8s-worldv2.pt, classes=['person', 'car', 'bus', 'truck', 'traffic light', 'door', 'chair', 'table', 'stairs', 'pole', 'wall', 'sofa', 'plant', 'bottle', 'cup', 'laptop', 'bag']
-[nekit 06:48:13.530] frame | phone_fps=69.500 rx_mbs=13.200 dropped=80 cap_fps=33.300 draw_fps=33.300 frames=151 wait_ms=0.000 grab_ms=7.800 zones_ms=3.700 publish_ms=0.100 draw_ms=3.800 show_ms=14.500 max_stage=show:18ms valid_pct=100.000 d_min=0.296 d_med=1.896 d_max=6.160 conf_hi_pct=27.200 zones=0.99/0.77/1.13 objs=0 | loop stats
-[nekit 06:48:15.552] frame | phone_fps=59.800 rx_mbs=12.200 dropped=58 cap_fps=31.200 draw_fps=31.200 frames=214 wait_ms=0.000 grab_ms=9.100 zones_ms=3.700 publish_ms=0.000 draw_ms=4.000 show_ms=15.100 max_stage=grab:43ms valid_pct=100.000 d_min=0.284 d_med=1.115 d_max=5.629 conf_hi_pct=31.800 zones=0.88/0.76/1.07 objs=3 | loop stats
-[nekit 06:48:17.579] frame | phone_fps=60.200 rx_mbs=12.800 dropped=54 cap_fps=33.600 draw_fps=33.600 frames=282 wait_ms=0.000 grab_ms=8.300 zones_ms=3.600 publish_ms=0.000 draw_ms=3.700 show_ms=14.000 max_stage=show:18ms valid_pct=100.000 d_min=0.311 d_med=1.096 d_max=5.699 conf_hi_pct=34.600 zones=0.95/0.75/1.02 objs=4 | loop stats
-[nekit 06:48:19.597] frame | phone_fps=59.900 rx_mbs=13.000 dropped=55 cap_fps=32.700 draw_fps=32.700 frames=348 wait_ms=0.000 grab_ms=8.400 zones_ms=4.200 publish_ms=0.000 draw_ms=3.700 show_ms=14.100 max_stage=show:19ms valid_pct=100.000 d_min=0.300 d_med=0.976 d_max=5.266 conf_hi_pct=30.000 zones=0.98/0.81/0.91 objs=3 | loop stats
-[nekit 06:48:21.608] frame | phone_fps=59.700 rx_mbs=12.500 dropped=55 cap_fps=32.800 draw_fps=32.800 frames=414 wait_ms=0.000 grab_ms=8.200 zones_ms=4.000 publish_ms=0.000 draw_ms=3.800 show_ms=14.300 max_stage=show:29ms valid_pct=100.000 d_min=0.277 d_med=0.887 d_max=4.238 conf_hi_pct=19.600 zones=0.79/0.79/0.63 objs=2 | loop stats
-[nekit 06:48:23.083] app | voice_state=idle active=1 | PTT press
-[nekit 06:48:23.084] realtime | state → listening
-[nekit 06:48:23.614] frame | phone_fps=60.200 rx_mbs=14.700 dropped=54 cap_fps=33.300 draw_fps=33.300 frames=481 wait_ms=0.000 grab_ms=8.700 zones_ms=3.700 publish_ms=0.000 draw_ms=3.700 show_ms=13.700 max_stage=show:15ms valid_pct=100.000 d_min=0.312 d_med=1.314 d_max=4.633 conf_hi_pct=20.400 zones=0.97/1.22/1.82 objs=6 | loop stats
-[nekit 06:48:25.637] frame | phone_fps=59.400 rx_mbs=14.400 dropped=44 cap_fps=37.100 draw_fps=37.100 frames=556 wait_ms=0.000 grab_ms=8.700 zones_ms=3.900 publish_ms=0.000 draw_ms=3.700 show_ms=10.500 max_stage=show:15ms valid_pct=100.000 d_min=0.333 d_med=1.205 d_max=5.344 conf_hi_pct=16.000 zones=0.90/1.23/1.33 objs=4 | loop stats
-[nekit 06:48:25.966] app | voice_state=listening armed=1 | PTT release
-[nekit 06:48:25.966] realtime | state → idle
-[nekit 06:48:26.195] realtime | state → thinking
-[nekit 06:48:27.133] tool | ms=0.000 ok=1 | find_object done
-[nekit 06:48:27.133] tool_call | ms=0.100 | find_object
-[nekit 06:48:27.660] frame | phone_fps=60.300 rx_mbs=14.400 dropped=54 cap_fps=33.600 draw_fps=33.600 frames=624 wait_ms=0.000 grab_ms=8.600 zones_ms=3.900 publish_ms=0.000 draw_ms=3.800 show_ms=13.300 max_stage=show:15ms valid_pct=100.000 d_min=0.335 d_med=1.167 d_max=4.332 conf_hi_pct=25.900 zones=0.92/1.22/1.27 objs=4 | loop stats
-[nekit 06:48:28.437] realtime | state → speaking
-[nekit 06:48:29.669] frame | phone_fps=59.700 rx_mbs=13.000 dropped=54 cap_fps=33.300 draw_fps=33.300 frames=691 wait_ms=0.000 grab_ms=8.400 zones_ms=3.700 publish_ms=0.000 draw_ms=3.700 show_ms=13.900 max_stage=show:15ms valid_pct=100.000 d_min=0.317 d_med=1.141 d_max=5.027 conf_hi_pct=30.700 zones=1.00/0.95/1.14 objs=6 | loop stats
-[nekit 06:48:31.681] frame | phone_fps=60.200 rx_mbs=13.000 dropped=53 cap_fps=33.300 draw_fps=33.300 frames=758 wait_ms=0.000 grab_ms=8.200 zones_ms=3.900 publish_ms=0.000 draw_ms=3.800 show_ms=13.900 max_stage=show:15ms valid_pct=100.000 d_min=0.338 d_med=1.049 d_max=3.578 conf_hi_pct=35.900 zones=0.87/1.19/1.30 objs=4 | loop stats
-[nekit 06:48:32.511] realtime | state → idle
-[nekit 06:48:33.708] frame | phone_fps=60.200 rx_mbs=12.700 dropped=54 cap_fps=33.500 draw_fps=33.500 frames=826 wait_ms=0.000 grab_ms=8.200 zones_ms=3.800 publish_ms=0.000 draw_ms=3.700 show_ms=13.900 max_stage=show:16ms valid_pct=100.000 d_min=0.341 d_med=1.257 d_max=5.934 conf_hi_pct=17.400 zones=0.92/1.22/1.40 objs=5 | loop stats
-[nekit 06:48:35.733] frame | phone_fps=59.900 rx_mbs=12.900 dropped=57 cap_fps=31.700 draw_fps=31.700 frames=890 wait_ms=0.000 grab_ms=8.700 zones_ms=4.000 publish_ms=0.000 draw_ms=4.000 show_ms=14.600 max_stage=show:21ms valid_pct=100.000 d_min=0.352 d_med=3.086 d_max=6.148 conf_hi_pct=31.500 zones=2.54/0.98/0.99 objs=3 | loop stats
-[nekit 06:48:37.744] frame | phone_fps=60.500 rx_mbs=12.800 dropped=61 cap_fps=30.200 draw_fps=30.200 frames=951 wait_ms=0.000 grab_ms=9.300 zones_ms=4.900 publish_ms=0.100 draw_ms=4.200 show_ms=14.400 max_stage=show:20ms valid_pct=100.000 d_min=0.254 d_med=0.975 d_max=6.328 conf_hi_pct=29.400 zones=1.35/0.96/0.81 objs=5 | loop stats
-[nekit 06:48:39.749] frame | phone_fps=59.400 rx_mbs=10.900 dropped=54 cap_fps=32.400 draw_fps=32.400 frames=1016 wait_ms=0.000 grab_ms=8.100 zones_ms=4.500 publish_ms=0.000 draw_ms=3.900 show_ms=14.100 max_stage=show:15ms valid_pct=100.000 d_min=0.531 d_med=0.721 d_max=0.898 conf_hi_pct=0.000 zones=0.32/0.23/0.17 objs=1 | loop stats
-[nekit 06:48:41.771] frame | phone_fps=59.900 rx_mbs=9.700 dropped=51 cap_fps=34.600 draw_fps=34.600 frames=1086 wait_ms=0.100 grab_ms=8.200 zones_ms=2.400 publish_ms=0.000 draw_ms=3.800 show_ms=14.100 max_stage=show:17ms valid_pct=100.000 d_min=0.403 d_med=0.678 d_max=0.899 conf_hi_pct=1.600 zones=0.32/0.23/0.17 objs=0 | loop stats
-[nekit 06:48:43.772] frame | phone_fps=60.000 rx_mbs=9.700 dropped=54 cap_fps=33.500 draw_fps=33.500 frames=1153 wait_ms=0.000 grab_ms=8.700 zones_ms=2.600 publish_ms=0.000 draw_ms=3.900 show_ms=14.300 max_stage=show:16ms valid_pct=100.000 d_min=0.368 d_med=0.662 d_max=0.903 conf_hi_pct=2.700 zones=0.32/0.23/0.17 objs=0 | loop stats
-[nekit 06:48:45.777] frame | phone_fps=60.400 rx_mbs=9.900 dropped=52 cap_fps=33.900 draw_fps=33.900 frames=1221 wait_ms=0.000 grab_ms=8.600 zones_ms=2.500 publish_ms=0.000 draw_ms=3.900 show_ms=14.200 max_stage=show:16ms valid_pct=100.000 d_min=0.595 d_med=0.749 d_max=0.911 conf_hi_pct=0.000 zones=0.32/0.23/0.17 objs=0 | loop stats
-[nekit 06:48:47.788] frame | phone_fps=59.700 rx_mbs=10.000 dropped=53 cap_fps=33.300 draw_fps=33.300 frames=1288 wait_ms=0.000 grab_ms=8.900 zones_ms=2.500 publish_ms=0.000 draw_ms=4.000 show_ms=14.300 max_stage=show:15ms valid_pct=100.000 d_min=0.378 d_med=0.712 d_max=0.913 conf_hi_pct=2.500 zones=0.32/0.23/0.17 objs=0 | loop stats
-[nekit 06:48:49.818] frame | phone_fps=60.100 rx_mbs=9.800 dropped=58 cap_fps=31.500 draw_fps=31.500 frames=1352 wait_ms=0.000 grab_ms=9.700 zones_ms=2.700 publish_ms=0.000 draw_ms=4.400 show_ms=14.700 max_stage=show:16ms valid_pct=100.000 d_min=0.364 d_med=0.665 d_max=0.907 conf_hi_pct=2.600 zones=0.32/0.23/0.17 objs=0 | loop stats
+[nekit 07:51:19.349] detect | model=yolov8s-worldv2.pt device=mps | YOLO-World loaded
+[nekit 07:51:20.618] frame | phone_fps=30.000 rx_mbs=5.600 dropped=8 cap_fps=26.000 draw_fps=26.000 det_fps=0.000 frames=136 wait_ms=0.000 grab_ms=9.300 zones_ms=9.100 publish_ms=0.200 draw_ms=5.000 show_ms=14.500 max_stage=draw:28ms valid_pct=100.000 d_min=0.172 d_med=0.338 d_max=3.803 conf_hi_pct=64.100 zones=0.33/0.33/0.32 objs=0 | loop stats
+[nekit 07:51:20.801] app | ms=6149 | detector warm
+[nekit 07:51:22.642] frame | phone_fps=29.600 rx_mbs=5.000 dropped=3 cap_fps=28.600 draw_fps=28.600 det_fps=2.000 frames=194 det_ms=41.200 wait_ms=0.100 grab_ms=8.400 zones_ms=7.900 publish_ms=0.200 draw_ms=3.800 show_ms=14.100 max_stage=grab:17ms valid_pct=100.000 d_min=0.124 d_med=0.235 d_max=0.573 conf_hi_pct=69.800 zones=0.25/0.24/0.23 objs=1 | loop stats
+[nekit 07:51:24.664] frame | phone_fps=30.100 rx_mbs=4.600 dropped=0 cap_fps=29.700 draw_fps=29.700 det_fps=2.000 frames=254 det_ms=42.000 wait_ms=0.000 grab_ms=7.800 zones_ms=7.900 publish_ms=0.200 draw_ms=3.700 show_ms=14.000 max_stage=show:15ms valid_pct=100.000 d_min=0.116 d_med=0.266 d_max=0.301 conf_hi_pct=74.000 zones=0.27/0.27/0.26 objs=1 | loop stats
+[nekit 07:51:24.901] health | uptime_s=12 rss_mb=1121 cpu_pct=111 threads=29 thermal=ok | process
+[nekit 07:51:26.681] frame | phone_fps=30.300 rx_mbs=4.800 dropped=2 cap_fps=29.300 draw_fps=29.300 det_fps=2.000 frames=313 det_ms=42.500 wait_ms=0.000 grab_ms=7.900 zones_ms=8.000 publish_ms=0.200 draw_ms=3.700 show_ms=14.000 max_stage=show:16ms valid_pct=100.000 d_min=0.142 d_med=0.322 d_max=2.227 conf_hi_pct=63.000 zones=0.34/0.32/0.30 objs=1 | loop stats
+[nekit 07:51:28.708] frame | phone_fps=29.600 rx_mbs=5.700 dropped=0 cap_fps=30.100 draw_fps=30.100 det_fps=2.000 frames=374 det_ms=45.700 wait_ms=0.900 grab_ms=8.200 zones_ms=6.000 publish_ms=0.200 draw_ms=3.800 show_ms=14.000 max_stage=show:15ms valid_pct=100.000 d_min=0.132 d_med=0.345 d_max=1.390 conf_hi_pct=64.600 zones=0.37/0.35/0.34 objs=2 | loop stats
+[nekit 07:51:30.710] frame | phone_fps=30.000 rx_mbs=5.400 dropped=0 cap_fps=30.000 draw_fps=30.000 det_fps=2.000 frames=434 det_ms=44.400 wait_ms=1.100 grab_ms=7.900 zones_ms=6.200 publish_ms=0.200 draw_ms=3.800 show_ms=14.000 max_stage=show:15ms valid_pct=100.000 d_min=0.131 d_med=0.355 d_max=2.180 conf_hi_pct=67.800 zones=0.38/0.36/0.34 objs=3 | loop stats
+[nekit 07:51:32.740] frame | phone_fps=30.000 rx_mbs=5.500 dropped=0 cap_fps=30.000 draw_fps=30.000 det_fps=2.000 frames=495 det_ms=45.600 wait_ms=0.100 grab_ms=8.200 zones_ms=6.700 publish_ms=0.200 draw_ms=4.000 show_ms=14.000 max_stage=show:15ms valid_pct=100.000 d_min=0.133 d_med=0.324 d_max=0.632 conf_hi_pct=72.900 zones=0.36/0.35/0.33 objs=3 | loop stats
+[nekit 07:51:34.740] frame | phone_fps=30.000 rx_mbs=5.500 dropped=0 cap_fps=30.000 draw_fps=30.000 det_fps=2.000 frames=555 det_ms=47.100 wait_ms=0.200 grab_ms=8.400 zones_ms=6.400 publish_ms=0.200 draw_ms=3.900 show_ms=14.000 max_stage=show:15ms valid_pct=100.000 d_min=0.138 d_med=0.323 d_max=0.629 conf_hi_pct=73.300 zones=0.36/0.34/0.33 objs=2 | loop stats
+[nekit 07:51:35.050] health | uptime_s=22 rss_mb=1144 cpu_pct=71 threads=28 thermal=ok | process
+[nekit 07:51:36.777] frame | phone_fps=30.500 rx_mbs=5.600 dropped=0 cap_fps=30.000 draw_fps=30.000 det_fps=2.000 frames=616 det_ms=45.500 wait_ms=0.300 grab_ms=8.300 zones_ms=6.500 publish_ms=0.200 draw_ms=3.800 show_ms=14.000 max_stage=show:15ms valid_pct=100.000 d_min=0.105 d_med=0.324 d_max=0.658 conf_hi_pct=73.100 zones=0.36/0.35/0.33 objs=2 | loop stats
+[nekit 07:51:38.811] frame | phone_fps=30.000 rx_mbs=5.100 dropped=1 cap_fps=29.000 draw_fps=29.000 det_fps=2.000 frames=675 det_ms=48.600 wait_ms=0.000 grab_ms=8.600 zones_ms=6.900 publish_ms=0.300 draw_ms=4.100 show_ms=14.300 max_stage=show:19ms valid_pct=100.000 d_min=0.113 d_med=0.326 d_max=0.632 conf_hi_pct=72.800 zones=0.36/0.35/0.33 objs=2 | loop stats
+[nekit 07:51:40.830] frame | phone_fps=29.700 rx_mbs=5.200 dropped=2 cap_fps=29.200 draw_fps=29.200 det_fps=2.000 frames=734 det_ms=46.100 wait_ms=0.000 grab_ms=8.800 zones_ms=6.700 publish_ms=0.300 draw_ms=4.100 show_ms=14.200 max_stage=show:15ms valid_pct=100.000 d_min=0.117 d_med=0.345 d_max=1.286 conf_hi_pct=72.200 zones=0.37/0.35/0.34 objs=2 | loop stats
+[nekit 07:51:42.846] frame | phone_fps=30.300 rx_mbs=5.500 dropped=1 cap_fps=29.800 draw_fps=29.800 det_fps=2.000 frames=794 det_ms=47.400 wait_ms=0.200 grab_ms=8.400 zones_ms=6.500 publish_ms=0.200 draw_ms=4.000 show_ms=14.200 max_stage=show:15ms valid_pct=100.000 d_min=0.126 d_med=0.353 d_max=1.744 conf_hi_pct=71.700 zones=0.38/0.36/0.35 objs=2 | loop stats
+[nekit 07:51:44.856] frame | phone_fps=29.900 rx_mbs=5.600 dropped=0 cap_fps=29.900 draw_fps=29.900 det_fps=2.000 frames=854 det_ms=44.500 wait_ms=0.000 grab_ms=8.600 zones_ms=6.300 publish_ms=0.200 draw_ms=4.000 show_ms=14.100 max_stage=show:15ms valid_pct=100.000 d_min=0.139 d_med=0.360 d_max=1.707 conf_hi_pct=67.300 zones=0.38/0.36/0.35 objs=1 | loop stats
+[nekit 07:51:45.263] health | uptime_s=32 rss_mb=1117 cpu_pct=73 threads=28 thermal=ok | process
+[nekit 07:51:46.221] app | key f → find door
+[nekit 07:51:46.222] tool | ms=0.300 ok=1 | find_object done
+[tool/find_object] I don't see door.
+[nekit 07:51:46.222] tool | text="I don't see door." | speak find_object
+[nekit 07:51:46.222] tts | provider=edge blocking=1 chars=17 local=0 | speak requested
+[nekit 07:51:46.861] frame | phone_fps=29.900 rx_mbs=5.700 dropped=4 cap_fps=27.900 draw_fps=27.900 det_fps=2.000 frames=910 det_ms=45.000 wait_ms=0.000 grab_ms=9.400 zones_ms=6.900 publish_ms=0.300 draw_ms=4.300 show_ms=14.600 max_stage=show:35ms valid_pct=100.000 d_min=0.154 d_med=0.362 d_max=2.242 conf_hi_pct=66.100 zones=0.39/0.37/0.35 objs=1 | loop stats
+[TTS/edge] en-US-JennyNeural (11664 bytes): "I don't see door."
+[nekit 07:51:47.074] tts | voice=en-US-JennyNeural bytes=11664 text="I don't see door." | edge play start
+[nekit 07:51:48.884] frame | phone_fps=30.200 rx_mbs=5.300 dropped=6 cap_fps=27.200 draw_fps=27.200 det_fps=2.000 frames=965 det_ms=51.600 wait_ms=0.000 grab_ms=10.700 zones_ms=6.900 publish_ms=0.200 draw_ms=4.400 show_ms=14.300 max_stage=grab:101ms valid_pct=100.000 d_min=0.091 d_med=0.288 d_max=0.729 conf_hi_pct=68.800 zones=0.35/0.33/0.31 objs=1 | loop stats
+[TTS/edge] done
+[nekit 07:51:50.094] tts | edge play done
+[nekit 07:51:50.904] frame | phone_fps=29.600 rx_mbs=4.900 dropped=1 cap_fps=29.200 draw_fps=29.200 det_fps=2.000 frames=1024 det_ms=43.700 wait_ms=0.100 grab_ms=8.500 zones_ms=6.900 publish_ms=0.200 draw_ms=4.100 show_ms=14.200 max_stage=show:15ms valid_pct=100.000 d_min=0.122 d_med=0.301 d_max=0.979 conf_hi_pct=73.800 zones=0.33/0.32/0.30 objs=1 | loop stats
+[nekit 07:51:52.907] frame | phone_fps=30.400 rx_mbs=4.900 dropped=2 cap_fps=29.400 draw_fps=29.400 det_fps=2.000 frames=1083 det_ms=42.900 wait_ms=0.000 grab_ms=8.500 zones_ms=6.600 publish_ms=0.200 draw_ms=4.200 show_ms=14.200 max_stage=show:15ms valid_pct=100.000 d_min=0.129 d_med=0.299 d_max=0.601 conf_hi_pct=73.500 zones=0.34/0.32/0.32 objs=1 | loop stats
+[nekit 07:51:54.936] frame | phone_fps=29.600 rx_mbs=4.600 dropped=1 cap_fps=29.600 draw_fps=29.600 det_fps=2.000 frames=1143 det_ms=44.900 wait_ms=0.300 grab_ms=8.200 zones_ms=6.600 publish_ms=0.200 draw_ms=4.000 show_ms=14.200 max_stage=show:15ms valid_pct=100.000 d_min=0.019 d_med=0.057 d_max=0.348 conf_hi_pct=1.700 zones=0.12/0.13/0.17 objs=1 | loop stats
+[nekit 07:51:55.417] health | uptime_s=42 rss_mb=1203 cpu_pct=74 threads=28 thermal=ok | process
+[nekit 07:51:56.963] frame | phone_fps=30.200 rx_mbs=3.500 dropped=0 cap_fps=29.700 draw_fps=29.700 det_fps=2.000 frames=1203 det_ms=44.600 wait_ms=2.400 grab_ms=7.400 zones_ms=4.600 publish_ms=0.200 draw_ms=4.200 show_ms=14.700 max_stage=show:36ms valid_pct=100.000 d_min=0.031 d_med=0.061 d_max=0.240 conf_hi_pct=0.800 zones=0.08/0.08/0.11 objs=2 | loop stats
+[nekit 07:51:58.973] frame | phone_fps=29.800 rx_mbs=3.400 dropped=2 cap_fps=29.300 draw_fps=29.300 det_fps=2.000 frames=1262 det_ms=52.000 wait_ms=0.300 grab_ms=8.300 zones_ms=5.600 publish_ms=0.200 draw_ms=4.700 show_ms=14.500 max_stage=grab:20ms valid_pct=100.000 d_min=0.033 d_med=0.072 d_max=0.175 conf_hi_pct=8.400 zones=0.12/0.12/0.10 objs=1 | loop stats
+
+Interrupted.
+[nekit 07:51:59.625] app | reason='interrupted (Ctrl+C)' frames=1282 | main loop exit
+||PaMacCore (AUHAL)|| Error on line 2790: err='-50', msg=Unknown Error
+[nekit 07:52:00.090] crash | UNCAUGHT KeyboardInterrupt in unraisable (Exception ignored in atexit callback: <function _exit_handler at 0x12044a700>): 
+Traceback (most recent call last):
+  File "/Users/petromelnyk/Downloads/nekit/.venv/lib/python3.12/site-packages/sounddevice.py", line 2969, in _exit_handler
+    _terminate()
+  File "/Users/petromelnyk/Downloads/nekit/.venv/lib/python3.12/site-packages/sounddevice.py", line 2953, in _terminate
+    _check(_lib.Pa_Terminate(), 'Error terminating PortAudio')
+           ^^^^^^^^^^^^^^^^^^^
+KeyboardInterrupt
+[nekit 07:52:00.091] crash | uptime_s=46.900 | process exit

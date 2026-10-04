@@ -22,17 +22,26 @@ import socket
 import struct
 import threading
 import time
+import traceback
 from dataclasses import dataclass
 from typing import List, Optional
 
 import cv2
 import numpy as np
 
-from ..debuglog import log
+from ..debuglog import log, log_exc
 
 USBMUXD_SOCKET = "/var/run/usbmuxd"
 RECORD3D_PORT = 1337
 RECONNECT_SEC = 1.0
+# The phone sends 60 fps even when nothing moves, so this long without a byte
+# means the stream is dead while the socket still looks open (Record3D paused,
+# phone locked, or another client took the stream). Reconnect instead of
+# freezing on the last frame forever.
+STALL_RECONNECT_SEC = 3.0
+# A 1440x1920 frame is ~0.2–0.5 MB. Anything near this cap means the byte
+# stream lost framing (we would otherwise try to allocate garbage sizes).
+MAX_MESSAGE_BYTES = 64 * 1024 * 1024
 
 # usbmuxd framing: little-endian {length, version=1 (plist), message=8 (plist), tag}
 _MUX_HEADER = struct.Struct("<IIII")
@@ -87,6 +96,13 @@ def _recv_into_exact(sock: socket.socket, view: memoryview) -> None:
         if n == 0:
             raise ConnectionError("Record3D stream closed")
         got += n
+
+
+def _set_recv_timeout(sock: socket.socket, seconds: float) -> None:
+    """Kernel-level receive timeout; keeps MSG_WAITALL single-syscall reads."""
+    sec = int(seconds)
+    usec = int((seconds - sec) * 1_000_000)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVTIMEO, struct.pack("ll", sec, usec))
 
 
 def _mux_request(sock: socket.socket, payload: dict, tag: int = 1) -> dict:
@@ -301,10 +317,23 @@ class LatestFrameReader:
             self._sock = sock
             log("frame", "Record3D stream connected", device_id=self.device_id)
             try:
+                _set_recv_timeout(sock, STALL_RECONNECT_SEC)
                 self._pump(sock)
+            except (BlockingIOError, TimeoutError):
+                if not self._stop.is_set():
+                    log(
+                        "frame",
+                        "Record3D sent nothing — reconnecting",
+                        silent_s=STALL_RECONNECT_SEC,
+                    )
             except (OSError, ConnectionError) as exc:
                 if not self._stop.is_set():
                     log("frame", f"Record3D stream lost: {type(exc).__name__}: {exc}")
+            except Exception as exc:
+                # Never let the receiver thread die silently: that would freeze
+                # the picture on the last frame with nothing in the log.
+                log_exc("frame", "Record3D receiver error — reconnecting", exc)
+                print(traceback.format_exc().rstrip(), flush=True)
             finally:
                 self._sock = None
                 sock.close()
@@ -320,6 +349,8 @@ class LatestFrameReader:
         while not self._stop.is_set():
             _recv_into_exact(sock, header_view)
             size = _PT_HEADER.unpack(header)[3]
+            if size <= _R3D_HEADER.size or size > MAX_MESSAGE_BYTES:
+                raise ConnectionError(f"bad Record3D message size {size} — stream out of sync")
             body = bytearray(size)
             _recv_into_exact(sock, memoryview(body))
             with self._lock:

@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from typing import List, Optional
 
 import numpy as np
 
 from ..capture import median_depth_in_box
+from ..debuglog import log, log_exc
 
 DEFAULT_CLASSES = [
     "person",
@@ -83,6 +85,26 @@ class DetectionHold:
         return []
 
 
+def yolo_device() -> str:
+    """YOLO_DEVICE env (cpu / mps / auto). Auto picks the Apple GPU if present.
+
+    On CPU a YOLO-World pass is ~200 ms and pins ~170% CPU on an M2 — on a
+    fanless MacBook Air that throttles the whole app within minutes. On MPS
+    the same pass is ~25 ms at ~1/3 of the CPU.
+    """
+    want = (os.getenv("YOLO_DEVICE") or "auto").strip().lower()
+    if want != "auto":
+        return want
+    try:
+        import torch
+
+        if torch.backends.mps.is_available():
+            return "mps"
+    except Exception:
+        pass
+    return "cpu"
+
+
 class ObjectDetector:
     """Lazy-loads Ultralytics YOLO-World. Safe to construct without GPU."""
 
@@ -97,6 +119,7 @@ class ObjectDetector:
         self.model_name = model_name
         self._model = None
         self._failed = False
+        self.device = yolo_device()
 
     def _ensure_model(self):
         if self._model is not None or self._failed:
@@ -108,9 +131,38 @@ class ObjectDetector:
             # Set open-vocab vocabulary
             self._model.set_classes(self.classes)
             print(f"YOLO-World loaded: {self.model_name}, classes={self.classes}")
+            log("detect", "YOLO-World loaded", model=self.model_name, device=self.device)
         except Exception as e:
             print(f"YOLO-World unavailable ({e}). Object detection disabled.")
+            log_exc("detect", "YOLO-World unavailable", e)
             self._failed = True
+
+    def warmup(self, shape: tuple = (1920, 1440, 3)) -> None:
+        """Load the model and run one pass so the first real frame is not slow.
+
+        The first MPS pass compiles kernels (seconds); doing it at startup keeps
+        that hitch out of the live demo.
+        """
+        dummy = np.zeros(shape, dtype=np.uint8)
+        depth = np.ones(shape[:2], dtype=np.float32)
+        conf = np.full(shape[:2], 2, dtype=np.uint8)
+        self.detect(dummy, depth, conf)
+
+    def _predict(self, rgb_bgr: np.ndarray):
+        try:
+            return self._model.predict(
+                rgb_bgr, conf=self.conf, verbose=False, imgsz=640, device=self.device
+            )
+        except Exception as exc:
+            if self.device == "cpu":
+                raise
+            # A GPU backend hiccup must not cost us detection for the whole
+            # session: drop to CPU once and keep going.
+            log_exc("detect", f"YOLO on {self.device} failed, falling back to cpu", exc)
+            self.device = "cpu"
+            return self._model.predict(
+                rgb_bgr, conf=self.conf, verbose=False, imgsz=640, device=self.device
+            )
 
     def detect(
         self,
@@ -124,11 +176,9 @@ class ObjectDetector:
 
         h, w = rgb_bgr.shape[:2]
         try:
-            results = self._model.predict(
-                rgb_bgr, conf=self.conf, verbose=False, imgsz=640
-            )
+            results = self._predict(rgb_bgr)
         except Exception as e:
-            print(f"YOLO predict failed: {e}")
+            log_exc("detect", "YOLO predict failed", e)
             return []
 
         out: List[DetectedObject] = []

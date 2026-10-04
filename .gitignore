@@ -35,3 +35,7 @@ build/
 weights/
 Ultralytics/
 runs/
+
+# Session logs (assist/crashlog.py)
+logs/
+.nekit.lock

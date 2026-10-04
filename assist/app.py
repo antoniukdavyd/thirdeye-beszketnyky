@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import os
 import threading
 import time
-from typing import List, Optional, Tuple
+import traceback
+import zlib
+from typing import Dict, List, Optional, Tuple
 
 import cv2
 import numpy as np
@@ -13,7 +16,8 @@ from dotenv import load_dotenv
 from .agent import Intent, voice_ready
 from .capture import Record3DCapture
 from .channel import DeepgramVoiceSession, create_voice_channel
-from .debuglog import log
+from .crashlog import Watchdog, log_path
+from .debuglog import log, log_exc
 from .framelog import FrameLogger
 from .llm import OpenRouterClient
 from .perception import (
@@ -31,19 +35,85 @@ from .voice import speak
 from .voice.ptt_keys import is_space_down, space_hold_available
 
 WINDOW = "nekit assist"
-DETECT_EVERY_N = 4
 CENTER_ALERT_M = 0.8
 # Space is sampled on its own thread. Sampling it once per render pass meant the
 # PTT edge detector ran at whatever the render loop managed — a beep storm or a
 # YOLO pass could stretch that past 100 ms and swallow a short tap entirely.
 PTT_POLL_SEC = 0.015
-# Upper bound on detector rate so the worker cannot peg a core; detections are
-# held between passes by DetectionHold.
-DETECT_MIN_INTERVAL = 0.12
+# YOLO labeling cadence, measured pass start to pass start. 0.5 s = every 30th
+# frame of the phone's 60 fps stream. Zones and beeps still run on every frame;
+# this only paces labeling. Override with DETECT_INTERVAL_SEC.
+DEFAULT_DETECT_INTERVAL_SEC = 0.5
+# Floor so a typo cannot make the worker peg a core.
+MIN_DETECT_INTERVAL_SEC = 0.05
+# How long the last labels survive passes that find nothing.
+DETECT_HOLD_SEC = 0.5
 # The HUD is drawn and shown at most this tall. Record3D sends 1440x1920; drawing
 # and imshow-ing that full size cost ~35 ms a frame, halving the window's fps.
 # Perception and tools still get the full-resolution frame.
 DISPLAY_MAX_H = 960
+# One bad frame (odd size, truncated message, NaN-heavy depth) must not end a
+# live demo: per-frame errors are logged and the frame is skipped. Only this
+# many failures in a row — i.e. something persistently broken — stop the app.
+MAX_FRAME_ERRORS_IN_ROW = 120
+# YOLO on CPU can legitimately take ~0.4 s a pass; flag only real hangs.
+DETECT_STALL_SEC = 3.0
+
+
+# One fixed BGR color per detector class so boxes stay the same color from
+# pass to pass (there is no tracking, so per-box colors would flicker).
+LABEL_COLORS: Dict[str, Tuple[int, int, int]] = {
+    "person": (0, 230, 0),
+    "car": (0, 140, 255),
+    "bus": (0, 215, 255),
+    "truck": (0, 80, 180),
+    "traffic light": (255, 0, 255),
+    "door": (255, 160, 0),
+    "chair": (180, 105, 255),
+    "table": (0, 128, 128),
+    "stairs": (0, 0, 255),
+    "pole": (255, 255, 0),
+    "wall": (160, 160, 160),
+    "sofa": (130, 0, 130),
+    "plant": (50, 205, 154),
+    "bottle": (255, 0, 128),
+    "cup": (128, 128, 255),
+    "laptop": (255, 255, 255),
+    "bag": (42, 42, 165),
+}
+# Labels outside LABEL_COLORS (custom classes) pick from this by a stable hash.
+_FALLBACK_COLORS: Tuple[Tuple[int, int, int], ...] = (
+    (255, 128, 0),
+    (0, 255, 255),
+    (128, 255, 0),
+    (255, 0, 0),
+    (0, 255, 128),
+    (200, 200, 0),
+)
+
+
+def label_color(label: str) -> Tuple[int, int, int]:
+    key = (label or "").strip().lower()
+    color = LABEL_COLORS.get(key)
+    if color is not None:
+        return color
+    # zlib.crc32, not hash(): str hashes change every run.
+    return _FALLBACK_COLORS[zlib.crc32(key.encode("utf-8")) % len(_FALLBACK_COLORS)]
+
+
+def detect_interval_sec() -> float:
+    """DETECT_INTERVAL_SEC from env: seconds between YOLO pass starts."""
+    raw = (os.getenv("DETECT_INTERVAL_SEC") or "").strip()
+    try:
+        value = float(raw) if raw else DEFAULT_DETECT_INTERVAL_SEC
+    except ValueError:
+        value = DEFAULT_DETECT_INTERVAL_SEC
+    return max(MIN_DETECT_INTERVAL_SEC, value)
+
+
+def hold_passes(interval_sec: float) -> int:
+    """Empty passes to keep the last labels for, ~DETECT_HOLD_SEC in time."""
+    return max(1, round(DETECT_HOLD_SEC / interval_sec))
 
 
 def hud_scale(frame_h: int) -> float:
@@ -94,7 +164,10 @@ class AssistApp:
         self.beep = BeepAlert()
         self.zone_filter = ZoneFilter()
         self.detector = ObjectDetector() if enable_yolo else None
-        self.detection_hold = DetectionHold(ttl_frames=3)
+        self._detect_interval = detect_interval_sec()
+        self.detection_hold = DetectionHold(
+            ttl_frames=hold_passes(self._detect_interval)
+        )
         self.llm = OpenRouterClient()
         self.store = SceneStore()
         self.tools = ToolRegistry(self.store, llm=self.llm)
@@ -120,9 +193,11 @@ class AssistApp:
         self._detect_thread: Optional[threading.Thread] = None
         self._detect_lock = threading.Lock()
         self._detect_input: Optional[Tuple[np.ndarray, np.ndarray, np.ndarray]] = None
-        self._detect_busy = False
         self._ptt_thread: Optional[threading.Thread] = None
         self._ptt_stop = threading.Event()
+        self.watchdog = Watchdog()
+        self._frame_errors_in_row = 0
+        self._frame_error_counts: Dict[tuple, int] = {}
         self.framelog = FrameLogger(
             stream_stats=getattr(self.capture, "take_stats", None)
         )
@@ -175,9 +250,11 @@ class AssistApp:
             self._run_tool_speak("find_object", {"label": label})
             return
 
-        snap = self.store.snapshot(copy_rgb=True)
+        # Runs on the render thread: no frame copy, and never block on TTS here
+        # (a blocking cloud TTS call froze the whole window while it spoke).
+        snap = self.store.snapshot(copy_rgb=False)
         if not snap.has_frame or snap.rgb_bgr is None:
-            speak("No frame", blocking=True)
+            speak("No frame")
             return
 
         self._run_tool_speak("describe_scene", {"focus": question})
@@ -290,43 +367,52 @@ class AssistApp:
             self._ptt_thread = None
 
     def _submit_detect(self, rgb, depth, conf) -> None:
-        """Hand the newest frame to the detector worker; latest wins."""
+        """Hand the newest frame to the detector worker; latest wins.
+
+        Overwrites any frame the worker has not picked up yet, so each pass
+        labels the freshest frame available when it starts.
+        """
         if self.detector is None:
             return
         with self._detect_lock:
-            if self._detect_busy:
-                return
             self._detect_input = (rgb, depth, conf)
         self._detect_wake.set()
 
     def _detect_watch(self) -> None:
-        last = 0.0
+        # Load the model and compile GPU kernels before frames flow, so the
+        # first detections are not a multi-second hitch mid-demo.
+        t0 = time.monotonic()
+        try:
+            self.detector.warmup()
+            log("app", "detector warm", ms=round((time.monotonic() - t0) * 1000))
+        except Exception as exc:
+            log_exc("app", "detector warmup failed", exc)
+        last_start = 0.0
         while not self._detect_stop.is_set():
+            self.watchdog.beat("detect", limit_sec=DETECT_STALL_SEC)
+            # Wait out the interval *before* taking a frame: taking it first and
+            # then sleeping ran YOLO on a frame that was already stale.
+            wait = self._detect_interval - (time.monotonic() - last_start)
+            if wait > 0:
+                self._detect_stop.wait(min(wait, 0.1))
+                continue
             if not self._detect_wake.wait(0.1):
                 continue
             self._detect_wake.clear()
-            if self._detect_stop.is_set():
-                return
             with self._detect_lock:
                 job = self._detect_input
                 self._detect_input = None
-                self._detect_busy = job is not None
             if job is None:
                 continue
+            last_start = time.monotonic()
             try:
-                wait = DETECT_MIN_INTERVAL - (time.monotonic() - last)
-                if wait > 0:
-                    self._detect_stop.wait(wait)
-                if self._detect_stop.is_set():
-                    return
                 fresh = self.detector.detect(*job)
                 self.objects = self.detection_hold.update(fresh)
-                last = time.monotonic()
+                self.framelog.detected((time.monotonic() - last_start) * 1000.0)
             except Exception as exc:
                 log("app", f"detect error: {type(exc).__name__}: {exc}")
-            finally:
-                with self._detect_lock:
-                    self._detect_busy = False
+                print(traceback.format_exc(), flush=True)
+        self.watchdog.forget("detect")
 
     def _start_detect_watch(self) -> None:
         if self.detector is None or self._detect_thread is not None:
@@ -440,11 +526,7 @@ class AssistApp:
 
         for o in objects:
             x1, y1b, x2, y2 = (int(v * s) for v in o.box)
-            color = (
-                (0, 165, 255)
-                if any(k in o.label.lower() for k in ("car", "bus", "truck"))
-                else (0, 255, 180)
-            )
+            color = label_color(o.label)
             cv2.rectangle(vis, (x1, y1b), (x2, y2), color, 2)
             _draw_label(
                 vis,
@@ -512,6 +594,8 @@ class AssistApp:
             print("  Keyboard: d=scene  m=distance  p/c/f=find still work.")
             log("realtime", "disabled")
         print("  Logs: lines starting with [nekit ...] — copy those for debug.")
+        if log_path():
+            print(f"  Full session log (survives crashes): {log_path()}")
         print("  Tip: click the OpenCV window so Space is tracked.")
 
         # Boot phrase uses offline `say` so startup never hangs on a slow/
@@ -525,8 +609,11 @@ class AssistApp:
         if self.voice is not None:
             self.voice.prewarm()
 
+        self.watchdog.start()
+        exit_reason = "quit key"
         try:
             while True:
+                self.watchdog.beat("main")
                 if self.voice is not None:
                     self.voice.tick()
                 fl = self.framelog
@@ -545,51 +632,98 @@ class AssistApp:
                 # notification for any frame that landed mid-grab, so the loop
                 # kept waiting on an event that had already fired.
                 self.capture.clear_event()
-                frame = self.capture.grab()
-                if frame is None:
-                    fl.grab_failed()
-                    continue
-                t2 = time.perf_counter()
-                fl.stage("grab", (t2 - t1) * 1000.0)
-                fl.frame(frame)
-
-                self.frame_i += 1
-                raw_zones = compute_zones(frame.depth, frame.conf)
-                zones = self.zone_filter.update(raw_zones)
-                t3 = time.perf_counter()
-                fl.stage("zones", (t3 - t2) * 1000.0)
-
-                if self.detector:
-                    self._submit_detect(frame.rgb_bgr, frame.depth, frame.conf)
+                try:
+                    key = self._frame_step(fl, t1)
+                except Exception as exc:
+                    key = self._frame_failed(exc)
                 else:
-                    self.objects = []
-
-                objects = self.objects
-                self.beep.update(zones, objects)
-                self.scene = build_scene(zones, objects, device=frame.device_name)
-                self.last_rgb = frame.rgb_bgr
-                self.store.publish(frame.rgb_bgr, self.scene, objects)
-                t4 = time.perf_counter()
-                fl.stage("publish", (t4 - t3) * 1000.0)
-
-                vis = self._draw(frame.rgb_bgr, frame.depth, zones, objects)
-                t5 = time.perf_counter()
-                fl.stage("draw", (t5 - t4) * 1000.0)
-                cv2.imshow(WINDOW, vis)
-                key = cv2.waitKey(1) & 0xFF
-                fl.stage("show", (time.perf_counter() - t5) * 1000.0)
-                fl.rendered()
-                fl.maybe_summary(frame, zones, objects)
+                    self._frame_errors_in_row = 0
                 if key != 255 and not self._handle_key(key):
                     break
-        except KeyboardInterrupt:
+        except KeyboardInterrupt as exc:
+            exit_reason = f"interrupted ({str(exc) or 'Ctrl+C'})"
             print("\nInterrupted.")
+        except BaseException as exc:
+            exit_reason = f"crash: {type(exc).__name__}: {exc}"
+            raise
         finally:
+            log("app", "main loop exit", reason=exit_reason, frames=self.frame_i)
+            self.watchdog.forget("main")
             self._stop_ptt_watch()
             self._stop_detect_watch()
             if self.voice is not None and self.voice.active:
                 self.voice.end_session(announce=False)
             self.beep.close()
             self.capture.stop()
+            self.watchdog.stop()
             cv2.destroyAllWindows()
             print("Bye.")
+
+    def _frame_step(self, fl: FrameLogger, t1: float) -> int:
+        """Grab, process, draw and show one frame; returns the pressed key."""
+        frame = self.capture.grab()
+        if frame is None:
+            fl.grab_failed()
+            # Keep the window responsive even when frames cannot be used.
+            return cv2.waitKey(1) & 0xFF
+        t2 = time.perf_counter()
+        fl.stage("grab", (t2 - t1) * 1000.0)
+        fl.frame(frame)
+
+        self.frame_i += 1
+        raw_zones = compute_zones(frame.depth, frame.conf)
+        zones = self.zone_filter.update(raw_zones)
+        t3 = time.perf_counter()
+        fl.stage("zones", (t3 - t2) * 1000.0)
+
+        if self.detector:
+            self._submit_detect(frame.rgb_bgr, frame.depth, frame.conf)
+        else:
+            self.objects = []
+
+        objects = self.objects
+        self.beep.update(zones, objects)
+        self.scene = build_scene(zones, objects, device=frame.device_name)
+        self.last_rgb = frame.rgb_bgr
+        self.store.publish(frame.rgb_bgr, self.scene, objects)
+        t4 = time.perf_counter()
+        fl.stage("publish", (t4 - t3) * 1000.0)
+
+        vis = self._draw(frame.rgb_bgr, frame.depth, zones, objects)
+        t5 = time.perf_counter()
+        fl.stage("draw", (t5 - t4) * 1000.0)
+        cv2.imshow(WINDOW, vis)
+        key = cv2.waitKey(1) & 0xFF
+        fl.stage("show", (time.perf_counter() - t5) * 1000.0)
+        fl.rendered()
+        fl.maybe_summary(frame, zones, objects)
+        return key
+
+    def _frame_failed(self, exc: Exception) -> int:
+        """Log a per-frame failure and skip the frame; re-raise if persistent.
+
+        Must be called from inside the ``except`` block (uses bare ``raise``).
+        """
+        self._frame_errors_in_row += 1
+        tb = traceback.extract_tb(exc.__traceback__)
+        where = f"{tb[-1].filename.rsplit('/', 1)[-1]}:{tb[-1].lineno}" if tb else "?"
+        sig = (type(exc).__name__, where)
+        count = self._frame_error_counts.get(sig, 0) + 1
+        self._frame_error_counts[sig] = count
+        # Full traceback the first few times, then a periodic count, so a
+        # 60 fps failure cannot flood the log.
+        if count <= 3 or count % 100 == 0:
+            log(
+                "app",
+                f"frame error: {type(exc).__name__}: {exc}",
+                at=where,
+                count=count,
+                in_row=self._frame_errors_in_row,
+                frame=self.frame_i,
+            )
+            if count <= 3:
+                print(traceback.format_exc().rstrip(), flush=True)
+        if self._frame_errors_in_row >= MAX_FRAME_ERRORS_IN_ROW:
+            log("app", "too many frame errors in a row — giving up", in_row=self._frame_errors_in_row)
+            raise
+        return cv2.waitKey(1) & 0xFF

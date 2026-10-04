@@ -57,6 +57,9 @@ Environment variables (see [`.env.example`](.env.example)):
 | `TTS_VOICE` | edge-tts voice (default `en-US-JennyNeural`) |
 | `R3D_BACKEND` | `native` (default, newest-frame reader, no lag) or `record3d` (vendor lib) |
 | `FRAME_LOG_SEC` | Camera/render loop stats interval in seconds (`0` = off) |
+| `YOLO_DEVICE` | `auto` (Apple GPU), `mps` or `cpu` |
+| `DETECT_INTERVAL_SEC` | Seconds between YOLO labeling passes (default `0.5` = every 30th frame at 60 fps; beeps still every frame) |
+| `NEKIT_LOG_FILE` | Session log in `logs/` (`0` = off) |
 
 3. Run:
 
@@ -67,6 +70,22 @@ python run_assist.py --no-voice   # keys only
 ```
 
 Without `DEEPGRAM_API_KEY` and `OPENROUTER_API_KEY`, voice is off; keyboard tools and passive beeps still work. Without `OPENROUTER_API_KEY`, `describe_scene` uses offline templates from SENSOR_JSON.
+
+## When it crashes or freezes
+
+Every run writes `logs/nekit-<date>-<time>.log` (path printed at startup): all terminal
+output plus
+
+- `crash | UNCAUGHT ...`: an exception that escaped, with thread name and traceback
+- `Fatal Python error: ...`: a native crash (segfault/abort) with every thread's stack
+- `watchdog | main STALLED`: render loop (or `detect`) stuck >1.5 s, with all stacks at that moment
+- `app | frame error`: a bad frame that was skipped (the app keeps running)
+- `frame | Record3D stream lost`: the phone stopped sending; reconnects automatically
+- `health | ...`: every 10 s, RAM, CPU, threads, thermal state
+- `app | main loop exit reason=...`: why the app stopped
+
+To dump all stacks from a live app without stopping it: `kill -USR1 <pid>`.
+Send the whole log file when reporting a problem.
 
 ## Layout
 

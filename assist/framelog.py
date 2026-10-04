@@ -72,6 +72,10 @@ class FrameLogger:
         self._renders = 0
         self._wait_timeouts = 0
         self._grab_none = 0
+        self._grab_none_total = 0
+        # YOLO passes finished in this window (written by the detector thread).
+        self._detects = 0
+        self._detect_ms = 0.0
         self._stage_ms: Dict[str, float] = {s: 0.0 for s in STAGES}
         self._stage_max_ms: Dict[str, float] = {s: 0.0 for s in STAGES}
         self.total_frames = 0
@@ -100,7 +104,12 @@ class FrameLogger:
 
     def grab_failed(self) -> None:
         self._grab_none += 1
-        log("frame", "grab returned no frame", total=self.total_frames)
+        self._grab_none_total += 1
+        # First few, then every 100th: a persistent failure at 60 fps would
+        # otherwise drown every other log line.
+        n = self._grab_none_total
+        if n <= 3 or n % 100 == 0:
+            log("frame", "grab returned no frame", count=n, total=self.total_frames)
 
     def frame(self, frame) -> None:
         """Record a grabbed FrameBundle; logs first frame and format changes."""
@@ -138,6 +147,11 @@ class FrameLogger:
     def rendered(self) -> None:
         self._renders += 1
 
+    def detected(self, ms: float) -> None:
+        """One finished YOLO pass and how long it took."""
+        self._detects += 1
+        self._detect_ms += ms
+
     def maybe_summary(self, frame=None, zones=None, objects=None) -> None:
         """Emit one summary line if the interval elapsed, then reset counters."""
         if not self.enabled:
@@ -157,8 +171,11 @@ class FrameLogger:
         fields.update({
             "cap_fps": round(self._frames / elapsed, 1),
             "draw_fps": round(self._renders / elapsed, 1),
+            "det_fps": round(self._detects / elapsed, 1),
             "frames": self.total_frames,
         })
+        if self._detects:
+            fields["det_ms"] = round(self._detect_ms / self._detects, 1)
         if self._wait_timeouts:
             fields["timeouts"] = self._wait_timeouts
         if self._grab_none:
@@ -182,6 +199,8 @@ class FrameLogger:
         self._window_start = now
         self._frames = 0
         self._renders = 0
+        self._detects = 0
+        self._detect_ms = 0.0
         self._wait_timeouts = 0
         self._grab_none = 0
         self._stage_ms = {s: 0.0 for s in STAGES}

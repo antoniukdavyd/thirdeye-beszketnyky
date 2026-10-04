@@ -185,7 +185,11 @@ class Record3DCapture:
         # set for a frame we already hold; don't decode it twice.
         if raw.seq == self._last_seq and self._last_bundle is not None:
             return self._last_bundle
-        decoded = decode_frame(raw.body)
+        try:
+            decoded = decode_frame(raw.body)
+        except Exception as exc:  # truncated / malformed message
+            log("frame", f"Record3D frame decode error: {type(exc).__name__}: {exc}", seq=raw.seq)
+            return None
         if decoded is None:
             log("frame", "Record3D frame decode failed", seq=raw.seq)
             return None
