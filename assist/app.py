@@ -52,6 +52,12 @@ DETECT_HOLD_SEC = 0.5
 # and imshow-ing that full size cost ~35 ms a frame, halving the window's fps.
 # Perception and tools still get the full-resolution frame.
 DISPLAY_MAX_H = 960
+# HUD only (beeps and tools still see every object): boxes for the nearest few,
+# thin lines for wall-sized boxes, thick for anything close.
+HUD_MAX_BOXES = 8
+NEAR_BOX_M = 1.5
+BIG_BOX_FRAC = 0.4
+LABEL_PAD = 3
 # One bad frame (odd size, truncated message, NaN-heavy depth) must not end a
 # live demo: per-frame errors are logged and the frame is skipped. Only this
 # many failures in a row — i.e. something persistently broken — stop the app.
@@ -101,6 +107,55 @@ def label_color(label: str) -> Tuple[int, int, int]:
     return _FALLBACK_COLORS[zlib.crc32(key.encode("utf-8")) % len(_FALLBACK_COLORS)]
 
 
+def hud_objects(objects: List[DetectedObject], limit: int = HUD_MAX_BOXES) -> List[DetectedObject]:
+    """The objects the HUD draws: nearest first, at most ``limit``."""
+    return sorted(objects, key=lambda o: o.dist_m)[:limit]
+
+
+def box_thickness(box: Tuple[int, int, int, int], dist_m: float, frame_w: int, frame_h: int) -> int:
+    x1, y1, x2, y2 = box
+    if (x2 - x1) * (y2 - y1) > BIG_BOX_FRAC * frame_w * frame_h:
+        return 1
+    return 3 if dist_m < NEAR_BOX_M else 2
+
+
+def _overlaps(a: Tuple[int, int, int, int], b: Tuple[int, int, int, int]) -> bool:
+    return a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]
+
+
+def place_labels(
+    boxes: List[Tuple[int, int, int, int]],
+    sizes: List[Tuple[int, int]],
+    frame_w: int,
+    frame_h: int,
+    reserved: List[Tuple[int, int, int, int]],
+) -> List[Optional[Tuple[int, int, int, int]]]:
+    """Label rects (x1, y1, x2, y2) per box, in priority order; None if no room.
+
+    Each label tries above the box, inside its top, further down inside it
+    (tall boxes such as doors run into the readout and the bottom bar), then
+    below it; shifted sideways to stay in the frame, and never placed over a
+    reserved area or an earlier label.
+    """
+    taken = list(reserved)
+    out: List[Optional[Tuple[int, int, int, int]]] = []
+    for (bx1, by1, bx2, by2), (lw, lh) in zip(boxes, sizes):
+        x = min(max(bx1, 0), max(0, frame_w - lw))
+        spot = None
+        inside = range(by1 + lh, by2 - lh + 1, lh) if lh > 0 else ()
+        for top in (by1 - lh, by1, *inside, by2):
+            rect = (x, top, x + lw, top + lh)
+            if top < 0 or top + lh > frame_h:
+                continue
+            if not any(_overlaps(rect, t) for t in taken):
+                spot = rect
+                break
+        out.append(spot)
+        if spot is not None:
+            taken.append(spot)
+    return out
+
+
 def detect_interval_sec() -> float:
     """DETECT_INTERVAL_SEC from env: seconds between YOLO pass starts."""
     raw = (os.getenv("DETECT_INTERVAL_SEC") or "").strip()
@@ -126,7 +181,8 @@ def hud_metrics(frame_h: int) -> dict:
     return {
         "scale": s,
         "zone_font": 0.9 * s,
-        "obj_font": 0.75 * s,
+        "obj_font": 0.4 * s,
+        "obj_thickness": max(1, int(s)),
         "help_font": 0.65 * s,
         "status_font": 0.7 * s,
         "bar_h": bar_h,
@@ -508,6 +564,14 @@ class AssistApp:
                 return (0, 200, 255)
             return (0, 220, 0)
 
+        shown = hud_objects(objects)
+        boxes = [tuple(int(v * s) for v in o.box) for o in shown]
+        # Far first so near boxes end up on top.
+        for o, b in reversed(list(zip(shown, boxes))):
+            cv2.rectangle(
+                vis, b[:2], b[2:], label_color(o.label), box_thickness(b, o.dist_m, w, h)
+            )
+
         labels = [
             ("L", zones.left, w3 // 2),
             ("C", zones.center, w // 2),
@@ -524,17 +588,31 @@ class AssistApp:
                 m["thickness"],
             )
 
-        for o in objects:
-            x1, y1b, x2, y2 = (int(v * s) for v in o.box)
-            color = label_color(o.label)
-            cv2.rectangle(vis, (x1, y1b), (x2, y2), color, 2)
-            _draw_label(
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        _, zone_base = cv2.getTextSize("L:0.00m", font, m["zone_font"], m["thickness"])
+        header = (0, 0, w, int(36 * m["scale"]) + zone_base + 6)
+        bar = (0, h - m["bar_h"], w, h)
+        texts, sizes, bases = [], [], []
+        for o in shown:
+            text = f"{o.label} {o.dist_m:.1f}m"
+            (tw, th), base = cv2.getTextSize(text, font, m["obj_font"], m["obj_thickness"])
+            texts.append(text)
+            sizes.append((tw + 2 * LABEL_PAD, th + base + 2 * LABEL_PAD))
+            bases.append(base)
+        rects = place_labels(boxes, sizes, w, h, reserved=[header, bar])
+        for o, text, base, r in zip(shown, texts, bases, rects):
+            if r is None:
+                continue  # no free spot: the box color still names the class
+            cv2.rectangle(vis, r[:2], r[2:], (0, 0, 0), -1)
+            cv2.putText(
                 vis,
-                f"{o.label} {o.dist_m:.1f}m",
-                (x1, max(int(28 * m["scale"]), y1b - 8)),
+                text,
+                (r[0] + LABEL_PAD, r[3] - LABEL_PAD - base),
+                font,
                 m["obj_font"],
-                color,
-                max(1, m["thickness"] - 1),
+                label_color(o.label),
+                m["obj_thickness"],
+                cv2.LINE_AA,
             )
 
         bar_h = m["bar_h"]
