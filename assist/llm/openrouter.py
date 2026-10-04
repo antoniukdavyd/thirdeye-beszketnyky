@@ -121,6 +121,9 @@ class OpenRouterClient:
         self.jpeg_max_side = int(os.getenv("LLM_JPEG_MAX_SIDE", "768"))
         self.jpeg_quality = int(os.getenv("LLM_JPEG_QUALITY", "80"))
         self.max_tokens_override = os.getenv("LLM_MAX_TOKENS")
+        # phash gate cache (last frame+question → answer).
+        self._cache_key: Optional[tuple] = None
+        self._cache_answer: str = ""
 
     @property
     def available(self) -> bool:
@@ -161,6 +164,40 @@ class OpenRouterClient:
         if not self.available:
             return _clip_spoken(self._offline_fallback(scene, user_question, mode))
 
+        # phash gate: identical frame + same question → reuse cached answer and
+        # skip a GPT-4o round-trip. Disabled transparently if imagehash absent.
+        key = self._frame_cache_key(rgb_bgr, user_question, mode)
+        if key is not None and key == self._cache_key:
+            return self._cache_answer
+
+        answer = self._describe_online(rgb_bgr, scene, user_question, mode)
+
+        if key is not None:
+            self._cache_key = key
+            self._cache_answer = answer
+        return answer
+
+    def _frame_cache_key(
+        self, rgb_bgr: np.ndarray, user_question: str, mode: Intent
+    ) -> Optional[tuple]:
+        try:
+            import imagehash
+            from PIL import Image
+        except Exception:
+            return None
+        try:
+            ph = imagehash.phash(Image.fromarray(rgb_bgr[:, :, ::-1]))
+        except Exception:
+            return None
+        return (str(ph), (user_question or "").strip().lower(), mode)
+
+    def _describe_online(
+        self,
+        rgb_bgr: np.ndarray,
+        scene: dict,
+        user_question: str,
+        mode: Intent,
+    ) -> str:
         system, max_tokens = self._prompt_and_tokens(mode)
         compact = compact_scene_for_llm(scene)
         # Fewer objects → shorter prompt / faster

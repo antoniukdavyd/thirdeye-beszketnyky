@@ -40,7 +40,7 @@ Research (LiveKit/Pipecat) confirms the production default is a **cascade** (STT
 - **F2 — OCR tool `read_text`.** ocrmac returns `[(text, conf, bbox), …]`. Return exact strings + side (left/center/right from bbox x). VLMs hallucinate route numbers; OCR must own exact text. Optional second step: pass strings to GPT-4o only for reasoning ("which bus goes downtown").
 - **F3 — unclamp tokens + reword prompt.** `LLM_MAX_TOKENS` → 150; vision cap in `_prompt_and_tokens` raised to match; system prompt → "Answer to the point, 2–3 short sentences; lead with the actionable part."
 - **F4 — vision model = gpt-4o.** Via `OPENROUTER_MODEL`; image to ≤768px, q~80.
-- **F5 — speed:** (a) **filler audio** "Looking…" the instant a vision/OCR tool starts, to mask latency; (b) **phash gate** — if the frame is ~unchanged since the last describe, reuse the cached answer instead of re-calling GPT-4o.
+- **F5 — speed:** (a) **filler** "Looking…" — done via the system prompt (the agent speaks it over its own Deepgram TTS stream). A local edge-tts/afplay filler was rejected: it would play over the same output device and fight Deepgram audio. (b) **phash gate** — if the frame is ~unchanged since the last describe AND the question matches, reuse the cached answer instead of re-calling GPT-4o. Guarded on `imagehash`; absent → cache disabled, no crash.
 - **F6 — depth zones upgrade (if time):** obstacle-aware L/C/R on top of `depth_zones.py` (ground-plane / height filter so the floor directly ahead doesn't read as "blocked"). Lower priority than F1–F4; the answerer wins come from F1–F5.
 
 ## 3. Components & interfaces

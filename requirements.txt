@@ -10,3 +10,5 @@ torch>=2.0
 pytest>=8.0
 edge-tts>=6.1
 deepgram-sdk>=7,<8
+ocrmac>=1.0 ; sys_platform == "darwin"
+imagehash>=4.3
