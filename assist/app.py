@@ -402,7 +402,9 @@ class AssistApp:
         print("  Logs: lines starting with [nekit ...] — copy those for debug.")
         print("  Tip: click the OpenCV window so Space is tracked.")
 
-        speak("Assistant ready")
+        # Boot phrase uses offline `say` so startup never hangs on a slow/
+        # blocked network reaching cloud TTS.
+        speak("Assistant ready", local=True)
 
         try:
             while True:

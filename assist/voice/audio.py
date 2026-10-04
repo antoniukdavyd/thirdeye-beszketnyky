@@ -195,8 +195,14 @@ def speak(
     blocking: bool = False,
     on_start: Optional[Callable[[], None]] = None,
     on_end: Optional[Callable[[], None]] = None,
+    local: bool = False,
 ) -> None:
-    """TTS with barge-in via stop_speaking(). Prefer edge-tts neural English."""
+    """TTS with barge-in via stop_speaking(). Prefer edge-tts neural English.
+
+    ``local=True`` skips cloud edge-tts and uses the offline macOS ``say``
+    voice directly — for short system phrases (boot, error) so they are instant
+    and never hang ~25s on a slow/blocked network before falling back.
+    """
     text = (text or "").strip()
     if not text:
         return
@@ -210,9 +216,10 @@ def speak(
             provider=provider,
             blocking=int(blocking),
             chars=len(text),
+            local=int(local),
         )
         ok = False
-        if provider in ("edge", "auto"):
+        if provider in ("edge", "auto") and not local:
             ok = _speak_edge(text, on_start)
         if not ok:
             for v in (

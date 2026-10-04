@@ -251,7 +251,12 @@ class DeepgramVoiceSession:
             asyncio.run(self._main())
         except Exception as exc:
             log_exc("realtime", "Deepgram session failed", exc)
-            self._fail_session("Speech is down, try again.")
+            # Timeout / connection errors are a network problem, not a broken
+            # app — say so distinctly instead of the generic "speech is down".
+            if isinstance(exc, (asyncio.TimeoutError, TimeoutError, OSError)):
+                self._fail_session("Network problem, check your connection.")
+            else:
+                self._fail_session("Speech is down, try again.")
         finally:
             self._session_active = False
             self.mic_gate.disarm()
@@ -266,7 +271,9 @@ class DeepgramVoiceSession:
         self._set_state(RealtimeState.IDLE)
         if not self._failure_announced:
             self._failure_announced = True
-            speak(phrase)
+            # Local TTS: the failure may itself be a network outage, so don't
+            # try (and hang on) cloud TTS to announce it.
+            speak(phrase, local=True)
 
     def _settings(self):
         from deepgram.agent.v1.types import (
