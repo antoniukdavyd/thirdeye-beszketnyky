@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from threading import Event
 from typing import Optional
 
 import cv2
 import numpy as np
+
+from ..debuglog import log
 
 DEVICE_TYPE__TRUEDEPTH = 0
 DEVICE_TYPE__LIDAR = 1
@@ -39,23 +42,77 @@ def align_depth_to_rgb(
     return depth_a, conf_a
 
 
-class Record3DCapture:
-    """Connects to Record3D and yields aligned frames."""
+def capture_backend() -> str:
+    """R3D_BACKEND: "native" (default) or "record3d" (vendor library)."""
+    return (os.getenv("R3D_BACKEND") or "native").strip().lower()
 
-    def __init__(self):
+
+def _to_bundle(rgb_bgr, depth, conf, K, device_type: int) -> FrameBundle:
+    if device_type == DEVICE_TYPE__TRUEDEPTH:
+        depth = cv2.flip(depth, 1)
+        rgb_bgr = cv2.flip(rgb_bgr, 1)
+        if conf is not None and conf.size > 0:
+            conf = cv2.flip(conf, 1)
+    depth_a, conf_a = align_depth_to_rgb(depth, conf, rgb_bgr.shape)
+    return FrameBundle(
+        rgb_bgr=rgb_bgr,
+        depth=depth_a,
+        conf=conf_a,
+        K=K,
+        device_type=device_type,
+    )
+
+
+class Record3DCapture:
+    """Connects to Record3D and yields the newest aligned frame.
+
+    The default "native" backend (see native.py) receives frames on its own
+    thread and decodes only the newest one, so a slow render loop drops frames
+    instead of building a backlog. The vendor library ("record3d") decodes
+    every frame on one thread and could not keep up with the phone's 60 fps at
+    1440x1920 — the picture fell further behind every second.
+    """
+
+    def __init__(self, backend: Optional[str] = None):
         self.event = Event()
-        # record3d is the iPhone USB SDK; only needed for live capture, and it
-        # does not build on every Python. Import lazily so logic/tests run
-        # without it (matches the sounddevice/deepgram guarded-import pattern).
+        self.backend = backend or capture_backend()
+        # record3d is the iPhone USB SDK; only needed for the "record3d"
+        # backend, and it does not build on every Python. Import lazily.
         self.session = None
+        self._reader = None
+        self._last_seq = 0
+        self._last_bundle: Optional[FrameBundle] = None
 
     def on_new_frame(self):
         self.event.set()
 
     def on_stream_stopped(self):
         print("Stream stopped")
+        log("frame", "Record3D stream stopped")
 
     def connect(self, dev_idx: int = 0) -> None:
+        if self.backend == "record3d":
+            self._connect_record3d(dev_idx)
+            return
+        from .native import LatestFrameReader, wait_for_device
+
+        dev = wait_for_device(dev_idx)
+        self._reader = LatestFrameReader(
+            dev.device_id,
+            on_new_frame=self.on_new_frame,
+            on_stream_stopped=self.on_stream_stopped,
+        )
+        self._reader.start()
+        print("Record3D reader started.")
+        log(
+            "frame",
+            "Record3D reader started",
+            backend="native",
+            dev_idx=dev_idx,
+            product_id=dev.product_id,
+        )
+
+    def _connect_record3d(self, dev_idx: int) -> None:
         from record3d import Record3DStream
 
         print("Searching for devices...")
@@ -77,11 +134,25 @@ class Record3DCapture:
         self.session.on_stream_stopped = self.on_stream_stopped
         self.session.connect(devs[dev_idx])
         print("Connected to Record3D stream.")
+        log(
+            "frame",
+            "Record3D connected",
+            backend="record3d",
+            dev_idx=dev_idx,
+            product_id=devs[dev_idx].product_id,
+        )
 
     def stop(self) -> None:
         """Best-effort teardown used by AssistApp.finally."""
+        if self._reader is not None:
+            self._reader.stop()
+            self._reader = None
         self.session = None
         self.event.set()
+
+    def take_stats(self) -> dict:
+        """Receive counters since the last call (native backend only)."""
+        return self._reader.take_stats() if self._reader is not None else {}
 
     def wait_frame(self, timeout: Optional[float] = None) -> bool:
         ok = self.event.wait(timeout)
@@ -91,6 +162,8 @@ class Record3DCapture:
         self.event.clear()
 
     def grab(self) -> Optional[FrameBundle]:
+        if self._reader is not None:
+            return self._grab_native()
         if self.session is None:
             return None
 
@@ -99,22 +172,33 @@ class Record3DCapture:
         conf = self.session.get_confidence_frame()
         K = self.session.get_intrinsic_mat()
         device_type = int(self.session.get_device_type())
-
-        if self.session.get_device_type() == DEVICE_TYPE__TRUEDEPTH:
-            depth = cv2.flip(depth, 1)
-            rgb = cv2.flip(rgb, 1)
-            if conf is not None and conf.size > 0:
-                conf = cv2.flip(conf, 1)
-
         rgb_bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
-        depth_a, conf_a = align_depth_to_rgb(depth, conf, rgb_bgr.shape)
-        return FrameBundle(
-            rgb_bgr=rgb_bgr,
-            depth=depth_a,
-            conf=conf_a,
-            K=K,
-            device_type=device_type,
+        return _to_bundle(rgb_bgr, depth, conf, K, device_type)
+
+    def _grab_native(self) -> Optional[FrameBundle]:
+        from .native import decode_frame
+
+        raw = self._reader.latest()
+        if raw is None:
+            return None
+        # A frame landing between clear_event() and latest() leaves the event
+        # set for a frame we already hold; don't decode it twice.
+        if raw.seq == self._last_seq and self._last_bundle is not None:
+            return self._last_bundle
+        decoded = decode_frame(raw.body)
+        if decoded is None:
+            log("frame", "Record3D frame decode failed", seq=raw.seq)
+            return None
+        bundle = _to_bundle(
+            decoded.rgb_bgr,
+            decoded.depth,
+            decoded.conf,
+            decoded.K,
+            decoded.device_type,
         )
+        self._last_seq = raw.seq
+        self._last_bundle = bundle
+        return bundle
 
 
 def median_depth_in_box(

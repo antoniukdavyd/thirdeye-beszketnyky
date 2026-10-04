@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import threading
 from typing import Optional
 
 import cv2
@@ -102,12 +103,18 @@ def _clip_spoken(text: str, max_chars: int = 320) -> str:
     return (cut or t[: max_chars - 1]).rstrip(".,;:") + "."
 
 
+# A walking user cannot wait 45 s for "what's ahead" — by then the answer
+# describes a scene they already left. Fail over to the offline template instead.
+VISION_CONNECT_TIMEOUT = 5.0
+VISION_READ_TIMEOUT = 20.0
+
+
 class OpenRouterClient:
     def __init__(
         self,
         api_key: Optional[str] = None,
         model: Optional[str] = None,
-        timeout: float = 45.0,
+        timeout: float = VISION_READ_TIMEOUT,
     ):
         self.api_key = (
             os.getenv("OPENROUTER_API_KEY", "") if api_key is None else api_key
@@ -115,8 +122,15 @@ class OpenRouterClient:
         self.model = model or os.getenv(
             "OPENROUTER_MODEL", "openai/gpt-4o-mini"
         )
-        self.timeout = timeout
+        self.timeout = float(os.getenv("LLM_READ_TIMEOUT") or timeout)
+        self.connect_timeout = float(
+            os.getenv("LLM_CONNECT_TIMEOUT") or VISION_CONNECT_TIMEOUT
+        )
         self.base_url = "https://openrouter.ai/api/v1/chat/completions"
+        # One pooled client for the process: a fresh httpx.Client per call threw
+        # away the TLS session and paid a full handshake on every question.
+        self._client: Optional[httpx.Client] = None
+        self._client_lock = threading.Lock()
         # Smaller image = faster upload / vision
         self.jpeg_max_side = int(os.getenv("LLM_JPEG_MAX_SIDE", "768"))
         self.jpeg_quality = int(os.getenv("LLM_JPEG_QUALITY", "80"))
@@ -128,6 +142,29 @@ class OpenRouterClient:
     @property
     def available(self) -> bool:
         return bool(self.api_key)
+
+    def _http(self) -> httpx.Client:
+        with self._client_lock:
+            if self._client is None:
+                self._client = httpx.Client(
+                    timeout=httpx.Timeout(
+                        self.timeout,
+                        connect=self.connect_timeout,
+                    ),
+                    limits=httpx.Limits(
+                        max_keepalive_connections=2, max_connections=4
+                    ),
+                )
+            return self._client
+
+    def close(self) -> None:
+        with self._client_lock:
+            client, self._client = self._client, None
+        if client is not None:
+            try:
+                client.close()
+            except Exception:
+                pass
 
     def _encode_jpeg(self, rgb_bgr: np.ndarray) -> str:
         img = rgb_bgr
@@ -236,10 +273,9 @@ class OpenRouterClient:
             "X-Title": "nekit-assist-mvp",
         }
         try:
-            with httpx.Client(timeout=self.timeout) as client:
-                r = client.post(self.base_url, headers=headers, json=payload)
-                r.raise_for_status()
-                data = r.json()
+            r = self._http().post(self.base_url, headers=headers, json=payload)
+            r.raise_for_status()
+            data = r.json()
             raw = data["choices"][0]["message"]["content"].strip()
             return _clip_spoken(raw)
         except Exception as e:

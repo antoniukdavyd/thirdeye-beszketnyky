@@ -55,6 +55,8 @@ Environment variables (see [`.env.example`](.env.example)):
 | `OPENROUTER_MODEL` | Vision model for scene describe |
 | `TTS_PROVIDER` | Local TTS for `d`/`m`/boot (`edge` or `say`) |
 | `TTS_VOICE` | edge-tts voice (default `en-US-JennyNeural`) |
+| `R3D_BACKEND` | `native` (default, newest-frame reader, no lag) or `record3d` (vendor lib) |
+| `FRAME_LOG_SEC` | Camera/render loop stats interval in seconds (`0` = off) |
 
 3. Run:
 

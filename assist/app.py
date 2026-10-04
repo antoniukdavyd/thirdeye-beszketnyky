@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+import time
 from typing import List, Optional, Tuple
 
 import cv2
@@ -13,6 +14,7 @@ from .agent import Intent, voice_ready
 from .capture import Record3DCapture
 from .channel import DeepgramVoiceSession, create_voice_channel
 from .debuglog import log
+from .framelog import FrameLogger
 from .llm import OpenRouterClient
 from .perception import (
     BeepAlert,
@@ -31,6 +33,17 @@ from .voice.ptt_keys import is_space_down, space_hold_available
 WINDOW = "nekit assist"
 DETECT_EVERY_N = 4
 CENTER_ALERT_M = 0.8
+# Space is sampled on its own thread. Sampling it once per render pass meant the
+# PTT edge detector ran at whatever the render loop managed — a beep storm or a
+# YOLO pass could stretch that past 100 ms and swallow a short tap entirely.
+PTT_POLL_SEC = 0.015
+# Upper bound on detector rate so the worker cannot peg a core; detections are
+# held between passes by DetectionHold.
+DETECT_MIN_INTERVAL = 0.12
+# The HUD is drawn and shown at most this tall. Record3D sends 1440x1920; drawing
+# and imshow-ing that full size cost ~35 ms a frame, halving the window's fps.
+# Perception and tools still get the full-resolution frame.
+DISPLAY_MAX_H = 960
 
 
 def hud_scale(frame_h: int) -> float:
@@ -100,6 +113,19 @@ class AssistApp:
         )
         self._space_held = False
         self._space_hold_mode = space_hold_available()
+        # Detection runs on a worker: a YOLO pass on the render thread stalled
+        # the display (and everything else holding the GIL) for its duration.
+        self._detect_stop = threading.Event()
+        self._detect_wake = threading.Event()
+        self._detect_thread: Optional[threading.Thread] = None
+        self._detect_lock = threading.Lock()
+        self._detect_input: Optional[Tuple[np.ndarray, np.ndarray, np.ndarray]] = None
+        self._detect_busy = False
+        self._ptt_thread: Optional[threading.Thread] = None
+        self._ptt_stop = threading.Event()
+        self.framelog = FrameLogger(
+            stream_stats=getattr(self.capture, "take_stats", None)
+        )
 
     def connect(self, dev_idx: int = 0) -> None:
         self.capture.connect(dev_idx=dev_idx)
@@ -156,7 +182,7 @@ class AssistApp:
 
         self._run_tool_speak("describe_scene", {"focus": question})
 
-    def _ptt_press(self) -> None:
+    def _ptt_press(self, hold: bool = False) -> None:
         """Start/arm listen on Space press (hold) or toggle key."""
         if self.voice is None:
             log("app", "voice unavailable — need Deepgram + OpenRouter")
@@ -173,27 +199,33 @@ class AssistApp:
             return
         if not self.voice.active:
             self.voice.start_session()
-            self.voice.arm_listen()
+            self.voice.arm_listen(hold=hold)
             return
         st = self.voice.state.value
         if st == "speaking":
-            self.voice.request_ptt_barge_in()
+            self.voice.request_ptt_barge_in(hold=hold)
             return
         if st == "listening":
             return
-        self.voice.arm_listen()
+        self.voice.arm_listen(hold=hold)
 
     def _ptt_release(self) -> None:
         """End listen turn when Space is released (true hold-to-talk)."""
         if self.voice is None or not self.voice.active:
             return
+        armed = bool(
+            getattr(self.voice, "mic_gate", None) and self.voice.mic_gate.armed
+        )
         log(
             "app",
             "PTT release",
             voice_state=self.voice.state.value,
-            armed=int(getattr(self.voice, "mic_gate", None) and self.voice.mic_gate.armed),
+            armed=int(armed),
         )
-        if self.voice.state.value == "listening":
+        # Keyed off the gate, not the HUD state: the agent can report "thinking"
+        # mid-hold, and gating the release on state=="listening" then left the
+        # mic armed with nobody to close it.
+        if armed or self.voice.state.value in ("listening", "connecting"):
             self.voice.disarm_listen()
 
     def _toggle_voice(self) -> None:
@@ -213,16 +245,16 @@ class AssistApp:
             return
         if not self.voice.active:
             self.voice.start_session()
-            self.voice.arm_listen()
+            self.voice.arm_listen(hold=False)
             return
         st = self.voice.state.value
         if st == "speaking":
-            self.voice.request_ptt_barge_in()
+            self.voice.request_ptt_barge_in(hold=False)
             return
         if st == "listening":
             self.voice.disarm_listen()
             return
-        self.voice.arm_listen()
+        self.voice.arm_listen(hold=False)
 
     def _poll_space_hold(self) -> None:
         """True hold-to-talk: Space down = listen, Space up = end turn."""
@@ -230,10 +262,85 @@ class AssistApp:
             return
         down = is_space_down()
         if down and not self._space_held:
-            self._ptt_press()
+            self._ptt_press(hold=True)
         elif not down and self._space_held:
             self._ptt_release()
         self._space_held = down
+
+    def _ptt_watch(self) -> None:
+        """Sample Space on a fixed cadence, independent of render-loop speed."""
+        while not self._ptt_stop.is_set():
+            try:
+                self._poll_space_hold()
+            except Exception as exc:  # a PTT hiccup must not kill the thread
+                log("app", f"ptt poll error: {type(exc).__name__}: {exc}")
+            self._ptt_stop.wait(PTT_POLL_SEC)
+
+    def _start_ptt_watch(self) -> None:
+        if not self._space_hold_mode or self._ptt_thread is not None:
+            return
+        self._ptt_stop.clear()
+        self._ptt_thread = threading.Thread(target=self._ptt_watch, daemon=True)
+        self._ptt_thread.start()
+
+    def _stop_ptt_watch(self) -> None:
+        self._ptt_stop.set()
+        if self._ptt_thread is not None:
+            self._ptt_thread.join(timeout=1.0)
+            self._ptt_thread = None
+
+    def _submit_detect(self, rgb, depth, conf) -> None:
+        """Hand the newest frame to the detector worker; latest wins."""
+        if self.detector is None:
+            return
+        with self._detect_lock:
+            if self._detect_busy:
+                return
+            self._detect_input = (rgb, depth, conf)
+        self._detect_wake.set()
+
+    def _detect_watch(self) -> None:
+        last = 0.0
+        while not self._detect_stop.is_set():
+            if not self._detect_wake.wait(0.1):
+                continue
+            self._detect_wake.clear()
+            if self._detect_stop.is_set():
+                return
+            with self._detect_lock:
+                job = self._detect_input
+                self._detect_input = None
+                self._detect_busy = job is not None
+            if job is None:
+                continue
+            try:
+                wait = DETECT_MIN_INTERVAL - (time.monotonic() - last)
+                if wait > 0:
+                    self._detect_stop.wait(wait)
+                if self._detect_stop.is_set():
+                    return
+                fresh = self.detector.detect(*job)
+                self.objects = self.detection_hold.update(fresh)
+                last = time.monotonic()
+            except Exception as exc:
+                log("app", f"detect error: {type(exc).__name__}: {exc}")
+            finally:
+                with self._detect_lock:
+                    self._detect_busy = False
+
+    def _start_detect_watch(self) -> None:
+        if self.detector is None or self._detect_thread is not None:
+            return
+        self._detect_stop.clear()
+        self._detect_thread = threading.Thread(target=self._detect_watch, daemon=True)
+        self._detect_thread.start()
+
+    def _stop_detect_watch(self) -> None:
+        self._detect_stop.set()
+        self._detect_wake.set()
+        if self._detect_thread is not None:
+            self._detect_thread.join(timeout=2.0)
+            self._detect_thread = None
 
     def _handle_key(self, key: int) -> bool:
         if key in (ord("q"), 27):
@@ -290,6 +397,11 @@ class AssistApp:
         zones,
         objects: List[DetectedObject],
     ) -> np.ndarray:
+        s = min(1.0, DISPLAY_MAX_H / float(rgb.shape[0]))
+        if s < 1.0:
+            size = (int(rgb.shape[1] * s), int(rgb.shape[0] * s))
+            rgb = cv2.resize(rgb, size, interpolation=cv2.INTER_AREA)
+            depth = cv2.resize(depth, size, interpolation=cv2.INTER_NEAREST)
         d_vis = np.clip(depth, 0, 5.0) / 5.0
         d_color = cv2.applyColorMap((d_vis * 255).astype(np.uint8), cv2.COLORMAP_TURBO)
         vis = cv2.addWeighted(rgb, 0.72, d_color, 0.28, 0)
@@ -327,7 +439,7 @@ class AssistApp:
             )
 
         for o in objects:
-            x1, y1b, x2, y2 = o.box
+            x1, y1b, x2, y2 = (int(v * s) for v in o.box)
             color = (
                 (0, 165, 255)
                 if any(k in o.label.lower() for k in ("car", "bus", "truck"))
@@ -406,51 +518,78 @@ class AssistApp:
         # blocked network reaching cloud TTS.
         speak("Assistant ready", local=True)
 
+        self._start_ptt_watch()
+        self._start_detect_watch()
+        # Open the agent socket now, not on the first Space press, so the first
+        # thing the user says is spoken into a live session.
+        if self.voice is not None:
+            self.voice.prewarm()
+
         try:
             while True:
                 if self.voice is not None:
                     self.voice.tick()
-                self._poll_space_hold()
+                fl = self.framelog
+                t0 = time.perf_counter()
                 if not self.capture.wait_frame(timeout=0.3):
+                    fl.wait_timeout()
+                    fl.maybe_summary()
                     key = cv2.waitKey(1) & 0xFF
                     if key != 255 and not self._handle_key(key):
                         break
                     continue
+                t1 = time.perf_counter()
+                fl.stage("wait", (t1 - t0) * 1000.0)
 
-                frame = self.capture.grab()
+                # Clear before grabbing: clearing afterwards threw away the
+                # notification for any frame that landed mid-grab, so the loop
+                # kept waiting on an event that had already fired.
                 self.capture.clear_event()
+                frame = self.capture.grab()
                 if frame is None:
+                    fl.grab_failed()
                     continue
+                t2 = time.perf_counter()
+                fl.stage("grab", (t2 - t1) * 1000.0)
+                fl.frame(frame)
 
                 self.frame_i += 1
                 raw_zones = compute_zones(frame.depth, frame.conf)
                 zones = self.zone_filter.update(raw_zones)
+                t3 = time.perf_counter()
+                fl.stage("zones", (t3 - t2) * 1000.0)
 
-                if self.detector and self.frame_i % DETECT_EVERY_N == 0:
-                    fresh = self.detector.detect(
-                        frame.rgb_bgr, frame.depth, frame.conf
-                    )
-                    self.objects = self.detection_hold.update(fresh)
-                elif not self.detector:
+                if self.detector:
+                    self._submit_detect(frame.rgb_bgr, frame.depth, frame.conf)
+                else:
                     self.objects = []
 
-                self.beep.update(zones, self.objects)
-                self.scene = build_scene(
-                    zones, self.objects, device=frame.device_name
-                )
+                objects = self.objects
+                self.beep.update(zones, objects)
+                self.scene = build_scene(zones, objects, device=frame.device_name)
                 self.last_rgb = frame.rgb_bgr
-                self.store.publish(frame.rgb_bgr, self.scene, self.objects)
+                self.store.publish(frame.rgb_bgr, self.scene, objects)
+                t4 = time.perf_counter()
+                fl.stage("publish", (t4 - t3) * 1000.0)
 
-                vis = self._draw(frame.rgb_bgr, frame.depth, zones, self.objects)
+                vis = self._draw(frame.rgb_bgr, frame.depth, zones, objects)
+                t5 = time.perf_counter()
+                fl.stage("draw", (t5 - t4) * 1000.0)
                 cv2.imshow(WINDOW, vis)
                 key = cv2.waitKey(1) & 0xFF
+                fl.stage("show", (time.perf_counter() - t5) * 1000.0)
+                fl.rendered()
+                fl.maybe_summary(frame, zones, objects)
                 if key != 255 and not self._handle_key(key):
                     break
         except KeyboardInterrupt:
             print("\nInterrupted.")
         finally:
+            self._stop_ptt_watch()
+            self._stop_detect_watch()
             if self.voice is not None and self.voice.active:
                 self.voice.end_session(announce=False)
+            self.beep.close()
             self.capture.stop()
             cv2.destroyAllWindows()
             print("Bye.")

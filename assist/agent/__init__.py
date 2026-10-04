@@ -30,6 +30,7 @@ __all__ = [
     "openrouter_agent_model",
     "deepgram_tts_model",
     "deepgram_stt_model",
+    "deepgram_listen_version",
     "voice_ready",
 ]
 
@@ -51,7 +52,20 @@ def deepgram_tts_model() -> str:
 
 
 def deepgram_stt_model() -> str:
+    if deepgram_listen_version() == "v2":
+        return os.getenv("DEEPGRAM_STT_MODEL") or "flux-general-en"
     return os.getenv("DEEPGRAM_STT_MODEL") or "nova-3"
+
+
+def deepgram_listen_version() -> str:
+    """"v1" (nova-*) or "v2" (Flux).
+
+    Only the v2/Flux listen provider implements ForceEndTurn — on v1 the server
+    answers FORCE_END_TURN_UNSUPPORTED and the turn stays open, so a PTT release
+    has to be endpointed with a silence tail instead.
+    """
+    v = (os.getenv("DEEPGRAM_LISTEN_VERSION") or "v1").strip().lower()
+    return "v2" if v == "v2" else "v1"
 
 
 def voice_ready() -> bool:
