@@ -3,10 +3,28 @@ import asyncio
 from deepgram.agent.v1.types import AgentV1Error
 
 from assist.channel.deepgram_agent import (
+    PTT_SILENCE_CHUNK,
     DeepgramVoiceSession,
     MicGate,
     RealtimeState,
 )
+
+
+def test_keepalive_silence_streamed_while_not_armed():
+    # While thinking/speaking (mic disarmed) we must keep streaming silence so
+    # the Deepgram Voice Agent socket does not hit CLIENT_MESSAGE_TIMEOUT during
+    # a slow tool call. Nothing-sent is the bug; silence is the fix.
+    session = DeepgramVoiceSession(tools=None, enable=False)
+    assert session.mic_gate.armed is False
+    assert session._next_send(None) == PTT_SILENCE_CHUNK
+    assert session._next_send(b"mic") == PTT_SILENCE_CHUNK  # mic audio ignored when not armed
+
+
+def test_mic_audio_forwarded_only_while_armed():
+    session = DeepgramVoiceSession(tools=None, enable=False)
+    session.mic_gate.arm()
+    assert session._next_send(b"mic pcm") == b"mic pcm"
+    assert session._next_send(None) is None  # nothing captured this tick
 
 
 def test_mic_gate_defaults_closed():

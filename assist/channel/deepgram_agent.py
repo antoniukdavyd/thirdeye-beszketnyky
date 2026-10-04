@@ -127,8 +127,12 @@ class DeepgramVoiceSession:
         self._last_phrase = text or ""
 
     def _set_state(self, state: RealtimeState) -> None:
+        # Only log real transitions — assistant audio arrives in many small
+        # chunks and would otherwise spam "state → speaking" hundreds of times.
+        changed = state != self.state
         self.state = state
-        log("realtime", f"state → {state.value}")
+        if changed:
+            log("realtime", f"state → {state.value}")
         if self.on_state:
             try:
                 self.on_state(state.value)
@@ -212,6 +216,18 @@ class DeepgramVoiceSession:
             self._play_buf.extend(pcm)
             self._set_state(RealtimeState.SPEAKING)
         return True
+
+    def _next_send(self, pcm: Optional[bytes]) -> Optional[bytes]:
+        """Decide what to stream to Deepgram this tick.
+
+        Armed (user talking): forward captured mic audio, else nothing.
+        Not armed (thinking / speaking): stream continuous silence so the
+        Voice Agent socket never starves — a slow vision tool call would
+        otherwise trigger CLIENT_MESSAGE_TIMEOUT and drop the session.
+        """
+        if self.mic_gate.armed:
+            return pcm
+        return PTT_SILENCE_CHUNK
 
     def tick(self) -> None:
         return
@@ -383,18 +399,12 @@ class DeepgramVoiceSession:
                             pcm = await asyncio.wait_for(audio_queue.get(), timeout=0.04)
                         except asyncio.TimeoutError:
                             pcm = None
-                        if self.mic_gate.armed:
-                            if pcm:
-                                await agent.send_media(pcm)
-                            continue
-                        # PTT released: short silence tail for end-of-turn.
-                        if (
-                            self._silence_until is not None
-                            and time.monotonic() < self._silence_until
-                        ):
-                            await agent.send_media(PTT_SILENCE_CHUNK)
-                        elif self._silence_until is not None:
-                            self._silence_until = None
+                        # Armed → forward mic audio; not armed → continuous
+                        # silence keepalive so the socket survives slow tool
+                        # calls (CLIENT_MESSAGE_TIMEOUT fix).
+                        to_send = self._next_send(pcm)
+                        if to_send:
+                            await agent.send_media(to_send)
 
                 async def receiver() -> None:
                     async for message in agent:
