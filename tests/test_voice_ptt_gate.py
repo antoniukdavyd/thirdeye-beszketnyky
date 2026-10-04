@@ -10,21 +10,32 @@ from assist.channel.deepgram_agent import (
 )
 
 
-def test_keepalive_silence_streamed_while_not_armed():
-    # While thinking/speaking (mic disarmed) we must keep streaming silence so
-    # the Deepgram Voice Agent socket does not hit CLIENT_MESSAGE_TIMEOUT during
-    # a slow tool call. Nothing-sent is the bug; silence is the fix.
-    session = DeepgramVoiceSession(tools=None, enable=False)
-    assert session.mic_gate.armed is False
-    assert session._next_send(None) == PTT_SILENCE_CHUNK
-    assert session._next_send(b"mic") == PTT_SILENCE_CHUNK  # mic audio ignored when not armed
-
-
-def test_mic_audio_forwarded_only_while_armed():
+def test_sender_forwards_mic_only_while_armed():
     session = DeepgramVoiceSession(tools=None, enable=False)
     session.mic_gate.arm()
-    assert session._next_send(b"mic pcm") == b"mic pcm"
-    assert session._next_send(None) is None  # nothing captured this tick
+    assert session._sender_action(b"mic pcm", now=100.0, last_activity=100.0) == ("media", b"mic pcm")
+    assert session._sender_action(None, now=100.0, last_activity=100.0) == ("idle", None)
+
+
+def test_sender_sends_silence_tail_for_endpointing_after_release():
+    # Right after PTT release, a short silence tail helps Deepgram endpoint the
+    # user turn. _silence_until is set by disarm_listen().
+    session = DeepgramVoiceSession(tools=None, enable=False)
+    session._silence_until = 100.5
+    action, payload = session._sender_action(None, now=100.2, last_activity=100.0)
+    assert action == "silence"
+    assert payload == PTT_SILENCE_CHUNK
+
+
+def test_sender_sends_keepalive_when_idle_between_turns():
+    # The real bug: during a long idle gap, silence does NOT reset Deepgram's
+    # inactivity timer (it wants user speech). A KeepAlive message does.
+    session = DeepgramVoiceSession(tools=None, enable=False)
+    session._silence_until = None
+    # <5s since last activity → nothing
+    assert session._sender_action(None, now=103.0, last_activity=100.0) == ("idle", None)
+    # >=5s since last activity → keepalive
+    assert session._sender_action(None, now=105.0, last_activity=100.0) == ("keepalive", None)
 
 
 def test_mic_gate_defaults_closed():

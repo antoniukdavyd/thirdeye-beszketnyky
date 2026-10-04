@@ -29,6 +29,9 @@ LISTEN_TIMEOUT_SECONDS = 12.0
 # After Space release, keep sending silence so Deepgram can end the user turn.
 PTT_RELEASE_SILENCE_SEC = 0.45
 PTT_SILENCE_CHUNK = bytes(int(INPUT_RATE * 0.04) * 2)  # 40 ms mono s16le
+# Send a KeepAlive message if no audio has flowed for this long, so the
+# Deepgram Voice Agent socket survives idle gaps between PTT turns.
+KEEPALIVE_INTERVAL_SEC = 5.0
 
 
 class RealtimeState(str, Enum):
@@ -217,17 +220,28 @@ class DeepgramVoiceSession:
             self._set_state(RealtimeState.SPEAKING)
         return True
 
-    def _next_send(self, pcm: Optional[bytes]) -> Optional[bytes]:
-        """Decide what to stream to Deepgram this tick.
+    def _sender_action(
+        self, pcm: Optional[bytes], now: float, last_activity: float
+    ) -> tuple[str, Optional[bytes]]:
+        """Decide what the sender does this tick. Pure → unit-testable.
 
-        Armed (user talking): forward captured mic audio, else nothing.
-        Not armed (thinking / speaking): stream continuous silence so the
-        Voice Agent socket never starves — a slow vision tool call would
-        otherwise trigger CLIENT_MESSAGE_TIMEOUT and drop the session.
+        Returns (action, payload):
+          - ("media", pcm):   armed, forward captured mic audio
+          - ("silence", chunk): just after PTT release, short tail to help
+                                 Deepgram endpoint the user turn
+          - ("keepalive", None): idle between turns — send a real KeepAlive
+                                 message. Deepgram's inactivity timer ignores
+                                 silent audio (it wants user speech), so silence
+                                 does NOT keep the socket alive; KeepAlive does.
+          - ("idle", None):    nothing to send this tick
         """
         if self.mic_gate.armed:
-            return pcm
-        return PTT_SILENCE_CHUNK
+            return ("media", pcm) if pcm else ("idle", None)
+        if self._silence_until is not None and now < self._silence_until:
+            return ("silence", PTT_SILENCE_CHUNK)
+        if now - last_activity >= KEEPALIVE_INTERVAL_SEC:
+            return ("keepalive", None)
+        return ("idle", None)
 
     def tick(self) -> None:
         return
@@ -388,6 +402,7 @@ class DeepgramVoiceSession:
                 log("realtime", "Deepgram websocket connected")
 
                 async def sender() -> None:
+                    last_activity = time.monotonic()
                     while not self._stop.is_set():
                         if (
                             self.mic_gate.armed
@@ -399,12 +414,19 @@ class DeepgramVoiceSession:
                             pcm = await asyncio.wait_for(audio_queue.get(), timeout=0.04)
                         except asyncio.TimeoutError:
                             pcm = None
-                        # Armed → forward mic audio; not armed → continuous
-                        # silence keepalive so the socket survives slow tool
-                        # calls (CLIENT_MESSAGE_TIMEOUT fix).
-                        to_send = self._next_send(pcm)
-                        if to_send:
-                            await agent.send_media(to_send)
+                        now = time.monotonic()
+                        action, payload = self._sender_action(pcm, now, last_activity)
+                        if action == "media":
+                            await agent.send_media(payload)
+                            last_activity = now
+                        elif action == "silence":
+                            await agent.send_media(payload)
+                            last_activity = now
+                        elif action == "keepalive":
+                            # Deepgram-sanctioned idle keepalive (silence does
+                            # not reset its inactivity timer).
+                            await agent.send_keep_alive()
+                            last_activity = now
 
                 async def receiver() -> None:
                     async for message in agent:
