@@ -1,110 +1,73 @@
-# Third Eye — outdoor walk MVP (nekit / magicstick)
+# Third Eye
 
-**Third Eye** is a blind-assist outdoor slice: cane user + **neck/waist camera** on **iPhone** via [Record3D](https://record3d.app/) USB streaming, processed on **Mac**.
+Third Eye is an assistive vision prototype for blind and visually impaired people. It combines a wearable iPhone camera and depth sensing with audio alerts and a voice assistant to help users understand their surroundings.
 
-**Primary language: English** (agent prompts, spoken phrases, local TTS).
+## Business value
 
-## Modes
+The project explores how familiar consumer hardware can provide practical orientation support alongside a cane: nearby obstacle awareness, object locations, distance estimates, scene descriptions, and reading visible text. Continuous audio cues provide immediate feedback, while spoken questions let users request context when they need it.
 
-| Mode | What happens |
-|------|----------------|
-| **Passive (always on)** | Waist-up L/C/R depth beeps (above cane). Extra alert for nearby cars. Runs continuously; independent of voice. |
-| **Voice (`Space` / `v`)** | **Hold Space to talk** (release = end of turn). `v` = toggle fallback. **Deepgram** STT/TTS + **OpenRouter** agent with camera/LiDAR **tools**. Click the OpenCV window first. |
-| **`d`** | Scene via `describe_scene` (OpenRouter vision). |
-| **`m`** | Distances from LiDAR JSON (`measure_distances`). |
-| **`p` / `c` / `f`** | Find person / car / door (`find_object`). |
+The current MVP runs on an iPhone connected to a Mac, with English voice interaction.
 
-Architecture: **user ↔ dialog agent** (OpenRouter); sensors are tools. **Beeps never go through the LLM** and stay on during voice.
+## Architecture and orchestration
 
-## Out of scope (this release)
+The application coordinates two parallel paths:
 
-- OCR (signs, menus, labels)
-- Bus / transit ETA
-- Indoor maps or turn-by-turn indoors
+- **Continuous perception:** camera and depth frames feed local distance analysis and background object detection. Proximity beeps run independently of the voice agent.
+- **On-demand assistance:** a voice agent interprets questions and calls tools to inspect the latest scene, measure distances, locate objects, read text, or generate a visual description.
 
-## Setup
-
-1. iPhone: Record3D → USB Streaming → Record.
-2. Mac:
-
-**Prerequisites:** Python **3.11 or 3.12** (not 3.13 — `record3d` has no 3.13 build) and `cmake` (`record3d` builds a C++ extension).
-
-```bash
-cd nekit
-brew install cmake            # required to build record3d
-python3.11 -m venv .venv      # must be 3.11/3.12, not 3.13
-source .venv/bin/activate
-pip install --upgrade pip
-pip install -r requirements.txt
-cp .env.example .env
-# fill keys in .env (see table below)
+```text
+iPhone camera + depth → USB capture → Local perception → Proximity alerts
+                                            ↓
+                                      Shared scene state
+                                            ↕
+User speech → Voice agent → Tool execution → Spoken response
 ```
 
-Always run inside the activated venv (`source .venv/bin/activate`) — plain
-`python3 run_assist.py` uses the system Python and will miss dependencies.
+A shared `SceneStore` connects perception to the agent's tools. Capture uses the newest available frame, and detection runs in a worker thread to keep the display and depth alerts responsive. Distances come from sensor data; OCR runs locally, while conversational reasoning and visual descriptions use cloud models.
 
-Environment variables (see [`.env.example`](.env.example)):
+The code is organized under `assist/` into capture, perception, agent tools, voice interaction, and model integration. `run_assist.py` starts the application.
 
-| Key | Purpose |
-|-----|---------|
-| `DEEPGRAM_API_KEY` | Voice agent STT + TTS (required for Space/v) |
-| `DEEPGRAM_TTS_MODEL` | Deepgram speak model (default Aura) |
-| `DEEPGRAM_STT_MODEL` | Deepgram listen model (default Nova) |
-| `OPENROUTER_API_KEY` | Agent “think” + `describe_scene` vision |
-| `OPENROUTER_AGENT_MODEL` | Chat model for voice agent |
-| `OPENROUTER_MODEL` | Vision model for scene describe |
-| `TTS_PROVIDER` | Local TTS for `d`/`m`/boot (`edge` or `say`) |
-| `TTS_VOICE` | edge-tts voice (default `en-US-JennyNeural`) |
-| `R3D_BACKEND` | `native` (default, newest-frame reader, no lag) or `record3d` (vendor lib) |
-| `FRAME_LOG_SEC` | Camera/render loop stats interval in seconds (`0` = off) |
-| `YOLO_DEVICE` | `auto` (Apple GPU), `mps` or `cpu` |
-| `DETECT_INTERVAL_SEC` | Seconds between YOLO labeling passes (default `0.5` = every 30th frame at 60 fps; beeps still every frame) |
-| `NEKIT_LOG_FILE` | Session log in `logs/` (`0` = off) |
+## Tech stack
 
-3. Run:
+- **Python 3.11/3.12** for application logic, threading, and asynchronous orchestration.
+- **OpenCV and NumPy** for image processing and depth analysis.
+- **PyTorch and Ultralytics YOLO-World** for local object detection, with Apple GPU acceleration when available.
+- **Record3D** for iPhone camera and depth streaming; **Apple Vision** for local OCR.
+- **Deepgram and OpenRouter** for voice interaction and language/vision models.
+
+## Run locally
+
+You need a Mac, a depth-capable iPhone (LiDAR recommended for the outdoor setup), Record3D with USB streaming, a USB cable, and a microphone and audio output. Use Python 3.11 or 3.12 with the supplied dependencies.
+
+From the project directory:
+
+```bash
+brew install python@3.11 cmake
+python3.11 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+cp .env.example .env
+```
+
+Edit `.env` and set `DEEPGRAM_API_KEY` and `OPENROUTER_API_KEY` to enable the voice assistant. Other model, audio, and performance settings are documented in [`.env.example`](.env.example). For a run without API keys, leave both key values empty: passive alerts and local sensor tools remain available, and scene descriptions use an offline fallback.
+
+Connect the iPhone over USB, open Record3D, enable **USB Streaming**, and start recording. Then run inside the activated virtual environment:
 
 ```bash
 python run_assist.py
-python run_assist.py --no-yolo    # beeps only
-python run_assist.py --no-voice   # keys only
 ```
 
-Without `DEEPGRAM_API_KEY` and `OPENROUTER_API_KEY`, voice is off; keyboard tools and passive beeps still work. Without `OPENROUTER_API_KEY`, `describe_scene` uses offline templates from SENSOR_JSON.
+Optional flags: `--no-voice` disables the voice session; `--no-yolo` disables object detection.
 
-## When it crashes or freezes
+Click the camera window to use the controls:
 
-Every run writes `logs/nekit-<date>-<time>.log` (path printed at startup): all terminal
-output plus
+| Control | Action |
+| --- | --- |
+| Hold `Space` | Talk; release to finish the turn |
+| `v` | Toggle listening |
+| `d` / `m` | Describe the scene / report distances |
+| `p` / `c` / `f` | Find a person / car / door |
+| `q` / `Esc` | Quit |
 
-- `crash | UNCAUGHT ...`: an exception that escaped, with thread name and traceback
-- `Fatal Python error: ...`: a native crash (segfault/abort) with every thread's stack
-- `watchdog | main STALLED`: render loop (or `detect`) stuck >1.5 s, with all stacks at that moment
-- `app | frame error`: a bad frame that was skipped (the app keeps running)
-- `frame | Record3D stream lost`: the phone stopped sending; reconnects automatically
-- `health | ...`: every 10 s, RAM, CPU, threads, thermal state
-- `app | main loop exit reason=...`: why the app stopped
-
-To dump all stacks from a live app without stopping it: `kill -USR1 <pid>`.
-Send the whole log file when reporting a problem.
-
-## Layout
-
-```
-assist/
-  app.py           # loop + HUD + SceneStore publish
-  agent/           # Third Eye prompt, env helpers
-  channel/         # Deepgram Voice Agent session (PTT)
-  tools/           # sense / measure / find / describe
-  capture/         # Record3D
-  perception/      # zones, YOLO, SceneStore
-  voice/           # local TTS only (keyboard / boot)
-  llm/             # OpenRouter vision + agent
-```
-
-## Controls
-
-- **Hold `Space`** — talk while held; release to send. `v` — toggle listen. Barge-in: hold Space while agent speaks
-- `d` / `m` / `p` / `c` / `f` — scene / distance / find (debug shortcuts; unchanged)
-- `q` / `Esc` — quit
-- Speak naturally in English after arming PTT; agent calls tools for meters and scene
-- Logs: `[nekit ...]` including tool calls and realtime state
+Session logs are saved in `logs/`; the active log path is printed at startup.
