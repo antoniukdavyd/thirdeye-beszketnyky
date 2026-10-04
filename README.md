@@ -27,14 +27,21 @@ Architecture: **user ↔ dialog agent** (OpenRouter); sensors are tools. **Beeps
 1. iPhone: Record3D → USB Streaming → Record.
 2. Mac:
 
+**Prerequisites:** Python **3.11 or 3.12** (not 3.13 — `record3d` has no 3.13 build) and `cmake` (`record3d` builds a C++ extension).
+
 ```bash
 cd nekit
-python3 -m venv .venv
+brew install cmake            # required to build record3d
+python3.11 -m venv .venv      # must be 3.11/3.12, not 3.13
 source .venv/bin/activate
+pip install --upgrade pip
 pip install -r requirements.txt
 cp .env.example .env
 # fill keys in .env (see table below)
 ```
+
+Always run inside the activated venv (`source .venv/bin/activate`) — plain
+`python3 run_assist.py` uses the system Python and will miss dependencies.
 
 Environment variables (see [`.env.example`](.env.example)):
 

@@ -1,3 +1,5 @@
+# Requires Python 3.11 or 3.12 (NOT 3.13 — record3d has no 3.13 build).
+# record3d builds a C++ extension: install cmake first (`brew install cmake`).
 record3d>=1.4
 opencv-python>=4.8
 numpy>=1.24
