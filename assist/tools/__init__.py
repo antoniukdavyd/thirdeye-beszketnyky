@@ -13,6 +13,7 @@ from ..perception.scene import compact_scene_for_llm
 from ..perception.scene_store import SceneStore
 
 SCENE_STALE_MS = 1500
+OCR_MIN_CONF = 0.3
 
 # label aliases: user/agent string → YOLO substrings
 _LABEL_ALIASES = {
@@ -74,9 +75,17 @@ class ToolRegistry:
         self,
         store: SceneStore,
         llm: Optional[OpenRouterClient] = None,
+        ocr: Optional[Callable[[Any], list]] = None,
     ) -> None:
         self.store = store
         self.llm = llm or OpenRouterClient()
+        # Injectable OCR callable (rgb_bgr -> [{text, conf, bearing, bbox}]).
+        # Defaults to Apple Vision; tests pass a fake.
+        if ocr is None:
+            from ..perception.ocr import recognize_text
+
+            ocr = recognize_text
+        self._ocr = ocr
 
     def declarations(self) -> list[dict]:
         """Gemini / OpenAI-style function declarations."""
@@ -128,17 +137,35 @@ class ToolRegistry:
                 },
             },
             {
+                "name": "read_text",
+                "description": (
+                    "Read text in view (signs, bus/route numbers, door labels, "
+                    "notices) with on-device OCR. Returns EXACT strings and their "
+                    "side. Use for “read this / what does the sign say / which bus / "
+                    "route number”. Report the exact text; never guess or correct it."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {},
+                },
+            },
+            {
                 "name": "describe_scene",
                 "description": (
-                    "Short English scene description from camera + sensors. "
-                    "Use for “what’s around / scene”, not for exact meters."
+                    "Answer a visual question about the scene from camera + sensors. "
+                    "Use for “what’s around / what’s ahead / what is this / describe”. "
+                    "Pass the user's actual words in `question`. Not for exact meters."
                 ),
                 "parameters": {
                     "type": "object",
                     "properties": {
+                        "question": {
+                            "type": "string",
+                            "description": "The user's actual question, verbatim",
+                        },
                         "focus": {
                             "type": "string",
-                            "description": "Optional focus for the description",
+                            "description": "Alias for question (optional)",
                         },
                     },
                 },
@@ -153,6 +180,7 @@ class ToolRegistry:
             "measure_distances": self._measure_distances,
             "find_object": self._find_object,
             "describe_scene": self._describe_scene,
+            "read_text": self._read_text,
         }
         fn = handlers.get(name)
         if fn is None:
@@ -172,6 +200,15 @@ class ToolRegistry:
             return result.get("error") or "No camera data."
         if name == "describe_scene":
             return result.get("text") or "No description."
+        if name == "read_text":
+            lines = result.get("lines") or []
+            if not lines:
+                return "I don't see any readable text."
+            parts = []
+            for ln in lines[:4]:
+                side = _bearing_en(ln.get("bearing", ""))
+                parts.append(f"{ln['text']} ({side})" if side else ln["text"])
+            return "Text: " + "; ".join(parts) + "."
         if name == "find_object":
             if not result.get("found"):
                 return f"I don't see {result.get('label', 'the object')}."
@@ -284,8 +321,10 @@ class ToolRegistry:
             return {"ok": False, "error": "No frame"}
         if snap.age_ms > SCENE_STALE_MS:
             return {"ok": False, "error": "No current camera frame"}
-        focus = (args.get("focus") or "").strip()
-        q = focus or "Describe the scene in front of the user."
+        # Prefer the user's real question; `focus` kept as a backward alias.
+        q = (args.get("question") or args.get("focus") or "").strip()
+        if not q:
+            q = "Describe the scene in front of the user."
         text = self.llm.describe(
             snap.rgb_bgr,
             snap.scene,
@@ -295,6 +334,34 @@ class ToolRegistry:
         return {
             "ok": True,
             "text": _clip_spoken(text),
+            "age_ms": round(snap.age_ms, 1),
+        }
+
+    def _read_text(self, args: dict) -> dict:
+        snap = self.store.snapshot(copy_rgb=True)
+        if not snap.has_frame or snap.rgb_bgr is None:
+            return {"ok": False, "error": "No frame"}
+        if snap.age_ms > SCENE_STALE_MS:
+            return {"ok": False, "error": "No current camera frame"}
+        try:
+            raw = self._ocr(snap.rgb_bgr)
+        except Exception as e:
+            log("tool", f"read_text ocr failed: {e}")
+            return {"ok": False, "error": "ocr unavailable"}
+        lines = [
+            {
+                "text": str(ln.get("text", "")).strip(),
+                "conf": round(float(ln.get("conf", 0.0)), 3),
+                "bearing": ln.get("bearing", ""),
+            }
+            for ln in (raw or [])
+            if str(ln.get("text", "")).strip()
+            and float(ln.get("conf", 0.0)) >= OCR_MIN_CONF
+        ]
+        return {
+            "ok": True,
+            "found": bool(lines),
+            "lines": lines,
             "age_ms": round(snap.age_ms, 1),
         }
 
