@@ -17,11 +17,11 @@ from ..perception.scene import compact_scene_for_llm
 SCENE_PROMPT = """You are an orientation assistant for a blind person.
 
 SCENE mode:
-- EXACTLY 1 short English sentence (max ~20 words).
-- Start with “In front of you…”
-- Only the essentials: space type + 1–2 key objects/people and sides.
-- No lists, no atmosphere, no small items (cups, bottles).
-- No meters. Do not invent.
+- Answer the user's actual question, to the point, in 2–3 short English sentences.
+- Lead with the actionable part (what matters for walking: space type, path, key objects/people and their side).
+- Use left / center / right for sides.
+- No meters unless they are in SENSOR_JSON. Never invent objects or distances.
+- No atmosphere, no long lists, skip trivial small items.
 """
 
 DISTANCE_PROMPT = """You are an orientation assistant for a blind person.
@@ -66,20 +66,40 @@ def _find_object_in_scene(question: str, objs: list) -> Optional[dict]:
     return None
 
 
-def _clip_spoken(text: str, max_chars: int = 160) -> str:
-    """Keep TTS short: first sentence, hard length cap."""
+def _clip_spoken(text: str, max_chars: int = 320) -> str:
+    """Keep TTS tight but useful: up to a few sentences, hard length cap.
+
+    Earlier the answerer felt "light" because replies were cut to the first
+    sentence. We now keep whole sentences up to ``max_chars`` so the user gets
+    the actionable 2–3 sentence answer, then hard-cap length as a safety net.
+    """
     t = (text or "").strip()
     if not t:
         return t
-    # First sentence boundary
-    for sep in (". ", "! ", "? ", ".\n"):
-        i = t.find(sep)
-        if 0 < i < max_chars:
-            return t[: i + 1].strip()
-    if len(t) > max_chars:
-        cut = t[: max_chars - 1].rsplit(" ", 1)[0]
-        return (cut or t[: max_chars - 1]).rstrip(".,;:") + "."
-    return t
+    if len(t) <= max_chars:
+        return t
+    # Keep as many whole sentences as fit under the cap.
+    kept = ""
+    rest = t
+    while rest:
+        nxt = -1
+        for sep in (". ", "! ", "? ", ".\n", "!\n", "?\n"):
+            i = rest.find(sep)
+            if i >= 0 and (nxt < 0 or i < nxt):
+                nxt = i
+        if nxt < 0:
+            break
+        candidate = kept + rest[: nxt + 1]
+        if len(candidate) > max_chars:
+            break
+        kept = candidate.rstrip() + " "
+        rest = rest[nxt + 2 :]
+    kept = kept.strip()
+    if kept:
+        return kept
+    # No sentence boundary fit — hard cap on words.
+    cut = t[: max_chars - 1].rsplit(" ", 1)[0]
+    return (cut or t[: max_chars - 1]).rstrip(".,;:") + "."
 
 
 class OpenRouterClient:
@@ -98,8 +118,8 @@ class OpenRouterClient:
         self.timeout = timeout
         self.base_url = "https://openrouter.ai/api/v1/chat/completions"
         # Smaller image = faster upload / vision
-        self.jpeg_max_side = int(os.getenv("LLM_JPEG_MAX_SIDE", "512"))
-        self.jpeg_quality = int(os.getenv("LLM_JPEG_QUALITY", "60"))
+        self.jpeg_max_side = int(os.getenv("LLM_JPEG_MAX_SIDE", "768"))
+        self.jpeg_quality = int(os.getenv("LLM_JPEG_QUALITY", "80"))
         self.max_tokens_override = os.getenv("LLM_MAX_TOKENS")
 
     @property
@@ -123,12 +143,13 @@ class OpenRouterClient:
         if self.max_tokens_override:
             cap = int(self.max_tokens_override)
         else:
-            cap = 55
+            cap = 150
+        # DISTANCE/FIND stay terse (single fact); SCENE gets room for 2–3 sentences.
         if mode == Intent.DISTANCE:
-            return DISTANCE_PROMPT, min(cap, 50)
+            return DISTANCE_PROMPT, min(cap, 60)
         if mode == Intent.FIND:
-            return FIND_PROMPT, min(cap, 45)
-        return SCENE_PROMPT, min(cap, 55)
+            return FIND_PROMPT, min(cap, 55)
+        return SCENE_PROMPT, cap
 
     def describe(
         self,

@@ -32,13 +32,13 @@ def test_dispatch_function_calls_builds_responses():
     assert body["args"]["label"] == "door"
 
 
-def test_deepgram_functions_are_client_side():
+def test_deepgram_functions_omit_client_side_and_endpoint():
     reg = ToolRegistry(SceneStore())
     fns = deepgram_think_functions(reg)
     names = {f["name"] for f in fns}
     assert names >= {"sense_snapshot", "measure_distances", "find_object", "describe_scene"}
     for f in fns:
-        assert f.get("client_side") is True
+        assert "client_side" not in f
         assert "endpoint" not in f
         assert "parameters" in f and f["parameters"].get("type") == "object"
 

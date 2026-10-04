@@ -26,6 +26,7 @@ from .perception import (
 )
 from .tools import ToolRegistry
 from .voice import speak
+from .voice.ptt_keys import is_space_down, space_hold_available
 
 WINDOW = "nekit assist"
 DETECT_EVERY_N = 4
@@ -97,6 +98,8 @@ class AssistApp:
             on_state=self._on_voice_state,
             enable=enable_voice,
         )
+        self._space_held = False
+        self._space_hold_mode = space_hold_available()
 
     def connect(self, dev_idx: int = 0) -> None:
         self.capture.connect(dev_idx=dev_idx)
@@ -153,14 +156,55 @@ class AssistApp:
 
         self._run_tool_speak("describe_scene", {"focus": question})
 
-    def _toggle_voice(self) -> None:
+    def _ptt_press(self) -> None:
+        """Start/arm listen on Space press (hold) or toggle key."""
         if self.voice is None:
             log("app", "voice unavailable — need Deepgram + OpenRouter")
             speak("Voice unavailable. Need Deepgram and OpenRouter keys.")
             return
         log(
             "app",
-            "key Space/v",
+            "PTT press",
+            voice_state=self.voice.state.value,
+            active=int(self.voice.active),
+        )
+        if not self.voice.available:
+            speak("Voice unavailable.")
+            return
+        if not self.voice.active:
+            self.voice.start_session()
+            self.voice.arm_listen()
+            return
+        st = self.voice.state.value
+        if st == "speaking":
+            self.voice.request_ptt_barge_in()
+            return
+        if st == "listening":
+            return
+        self.voice.arm_listen()
+
+    def _ptt_release(self) -> None:
+        """End listen turn when Space is released (true hold-to-talk)."""
+        if self.voice is None or not self.voice.active:
+            return
+        log(
+            "app",
+            "PTT release",
+            voice_state=self.voice.state.value,
+            armed=int(getattr(self.voice, "mic_gate", None) and self.voice.mic_gate.armed),
+        )
+        if self.voice.state.value == "listening":
+            self.voice.disarm_listen()
+
+    def _toggle_voice(self) -> None:
+        """Fallback toggle for `v` when Space hold is unavailable or unused."""
+        if self.voice is None:
+            log("app", "voice unavailable — need Deepgram + OpenRouter")
+            speak("Voice unavailable. Need Deepgram and OpenRouter keys.")
+            return
+        log(
+            "app",
+            "key v toggle",
             voice_state=self.voice.state.value,
             active=int(self.voice.active),
         )
@@ -180,12 +224,29 @@ class AssistApp:
             return
         self.voice.arm_listen()
 
+    def _poll_space_hold(self) -> None:
+        """True hold-to-talk: Space down = listen, Space up = end turn."""
+        if not self._space_hold_mode:
+            return
+        down = is_space_down()
+        if down and not self._space_held:
+            self._ptt_press()
+        elif not down and self._space_held:
+            self._ptt_release()
+        self._space_held = down
+
     def _handle_key(self, key: int) -> bool:
         if key in (ord("q"), 27):
             log("app", "quit key")
             return False
 
-        if key in (ord("v"), ord("V"), ord(" ")):
+        # Space is handled by HID hold polling; ignore waitKey (incl. key-repeat).
+        if key == ord(" "):
+            if not self._space_hold_mode:
+                self._toggle_voice()
+            return True
+
+        if key in (ord("v"), ord("V")):
             self._toggle_voice()
             return True
 
@@ -284,7 +345,7 @@ class AssistApp:
 
         bar_h = m["bar_h"]
         cv2.rectangle(vis, (0, h - bar_h), (w, h), (0, 0, 0), -1)
-        help_line = "Space=PTT voice  d=scene  m=dist  p/c/f=find  q=quit"
+        help_line = "hold Space=talk  v=toggle  d/m/p/c/f  q=quit"
         cv2.putText(
             vis,
             help_line,
@@ -322,8 +383,15 @@ class AssistApp:
             log("llm", "no API key — offline templates")
 
         if self.voice is not None:
-            print("Voice: Deepgram + OpenRouter PTT agent (Space).")
-            log("realtime", "Deepgram + OpenRouter enabled")
+            if self._space_hold_mode:
+                print("Voice: Deepgram + OpenRouter — hold Space to talk (v=toggle).")
+            else:
+                print("Voice: Deepgram + OpenRouter — Space/v toggle PTT.")
+            log(
+                "realtime",
+                "Deepgram + OpenRouter enabled",
+                space_hold=int(self._space_hold_mode),
+            )
         else:
             if voice_ready():
                 print("Voice off — install Deepgram and sounddevice dependencies.")
@@ -332,6 +400,7 @@ class AssistApp:
             print("  Keyboard: d=scene  m=distance  p/c/f=find still work.")
             log("realtime", "disabled")
         print("  Logs: lines starting with [nekit ...] — copy those for debug.")
+        print("  Tip: click the OpenCV window so Space is tracked.")
 
         speak("Assistant ready")
 
@@ -339,6 +408,7 @@ class AssistApp:
             while True:
                 if self.voice is not None:
                     self.voice.tick()
+                self._poll_space_hold()
                 if not self.capture.wait_frame(timeout=0.3):
                     key = cv2.waitKey(1) & 0xFF
                     if key != 255 and not self._handle_key(key):
@@ -379,4 +449,6 @@ class AssistApp:
         finally:
             if self.voice is not None and self.voice.active:
                 self.voice.end_session(announce=False)
+            self.capture.stop()
             cv2.destroyAllWindows()
+            print("Bye.")

@@ -340,6 +340,12 @@ def parse_tool_arguments(raw: Any) -> dict:
 
 
 def deepgram_think_functions(registry: ToolRegistry) -> list[dict]:
+    """Function defs for Deepgram Voice Agent.
+
+    Omit ``client_side`` and ``endpoint``: Deepgram rejects ``client_side`` in
+    Settings (UNPARSABLE_CLIENT_MESSAGE) and treats missing ``endpoint`` as
+    client-side execution.
+    """
     out = []
     for d in registry.declarations():
         out.append(
@@ -348,7 +354,6 @@ def deepgram_think_functions(registry: ToolRegistry) -> list[dict]:
                 "description": d["description"],
                 "parameters": d.get("parameters")
                 or {"type": "object", "properties": {}},
-                "client_side": True,
             }
         )
     return out

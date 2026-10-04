@@ -26,6 +26,9 @@ from ..voice.audio import speak, stop_speaking
 INPUT_RATE = 16_000
 OUTPUT_RATE = 24_000
 LISTEN_TIMEOUT_SECONDS = 12.0
+# After Space release, keep sending silence so Deepgram can end the user turn.
+PTT_RELEASE_SILENCE_SEC = 0.45
+PTT_SILENCE_CHUNK = bytes(int(INPUT_RATE * 0.04) * 2)  # 40 ms mono s16le
 
 
 class RealtimeState(str, Enum):
@@ -97,6 +100,7 @@ class DeepgramVoiceSession:
         self._stop = threading.Event()
         self._session_active = False
         self._listen_deadline: Optional[float] = None
+        self._silence_until: Optional[float] = None
         self._play_buf = bytearray()
         self._play_lock = threading.Lock()
         self._audio_done = False
@@ -175,6 +179,8 @@ class DeepgramVoiceSession:
     def disarm_listen(self) -> None:
         self.mic_gate.disarm()
         self._listen_deadline = None
+        # Tail silence helps Deepgram endpoint the utterance after PTT release.
+        self._silence_until = time.monotonic() + PTT_RELEASE_SILENCE_SEC
         if self.active and self.state == RealtimeState.LISTENING:
             self._set_state(RealtimeState.IDLE)
 
@@ -374,11 +380,21 @@ class DeepgramVoiceSession:
                         ):
                             self.disarm_listen()
                         try:
-                            pcm = await asyncio.wait_for(audio_queue.get(), timeout=0.2)
+                            pcm = await asyncio.wait_for(audio_queue.get(), timeout=0.04)
                         except asyncio.TimeoutError:
-                            continue
+                            pcm = None
                         if self.mic_gate.armed:
-                            await agent.send_media(pcm)
+                            if pcm:
+                                await agent.send_media(pcm)
+                            continue
+                        # PTT released: short silence tail for end-of-turn.
+                        if (
+                            self._silence_until is not None
+                            and time.monotonic() < self._silence_until
+                        ):
+                            await agent.send_media(PTT_SILENCE_CHUNK)
+                        elif self._silence_until is not None:
+                            self._silence_until = None
 
                 async def receiver() -> None:
                     async for message in agent:
@@ -418,10 +434,20 @@ class DeepgramVoiceSession:
             self._queue_assistant_audio(message)
             return
         if isinstance(message, AgentV1Error):
-            detail = f"{message.code} {message.description}".lower()
+            code = getattr(message, "code", "") or ""
+            desc = getattr(message, "description", "") or ""
+            log("realtime", "AgentV1Error", code=code, desc=desc[:240])
+            detail = f"{code} {desc}".lower()
             thinking_failed = any(
                 term in detail
-                for term in ("openrouter", "llm", "completion", "think")
+                for term in (
+                    "openrouter",
+                    "llm",
+                    "completion",
+                    "think",
+                    "unparsable",
+                    "settings",
+                )
             )
             self._fail_session(
                 "I can't think right now."

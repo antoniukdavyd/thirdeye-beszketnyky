@@ -8,7 +8,6 @@ from typing import Optional
 
 import cv2
 import numpy as np
-from record3d import Record3DStream
 
 DEVICE_TYPE__TRUEDEPTH = 0
 DEVICE_TYPE__LIDAR = 1
@@ -45,7 +44,10 @@ class Record3DCapture:
 
     def __init__(self):
         self.event = Event()
-        self.session: Optional[Record3DStream] = None
+        # record3d is the iPhone USB SDK; only needed for live capture, and it
+        # does not build on every Python. Import lazily so logic/tests run
+        # without it (matches the sounddevice/deepgram guarded-import pattern).
+        self.session = None
 
     def on_new_frame(self):
         self.event.set()
@@ -54,6 +56,8 @@ class Record3DCapture:
         print("Stream stopped")
 
     def connect(self, dev_idx: int = 0) -> None:
+        from record3d import Record3DStream
+
         print("Searching for devices...")
         while True:
             devs = Record3DStream.get_connected_devices()
@@ -73,6 +77,11 @@ class Record3DCapture:
         self.session.on_stream_stopped = self.on_stream_stopped
         self.session.connect(devs[dev_idx])
         print("Connected to Record3D stream.")
+
+    def stop(self) -> None:
+        """Best-effort teardown used by AssistApp.finally."""
+        self.session = None
+        self.event.set()
 
     def wait_frame(self, timeout: Optional[float] = None) -> bool:
         ok = self.event.wait(timeout)

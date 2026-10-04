@@ -9,7 +9,7 @@
 | Mode | What happens |
 |------|----------------|
 | **Passive (always on)** | Waist-up L/C/R depth beeps (above cane). Extra alert for nearby cars. Runs continuously; independent of voice. |
-| **Voice (`Space` / `v`)** | **Push-to-talk (PTT):** press Space to arm the mic, speak, then Space again (or end-of-turn) to disarm. **Deepgram** STT/TTS + **OpenRouter** agent with camera/LiDAR **tools**. |
+| **Voice (`Space` / `v`)** | **Hold Space to talk** (release = end of turn). `v` = toggle fallback. **Deepgram** STT/TTS + **OpenRouter** agent with camera/LiDAR **tools**. Click the OpenCV window first. |
 | **`d`** | Scene via `describe_scene` (OpenRouter vision). |
 | **`m`** | Distances from LiDAR JSON (`measure_distances`). |
 | **`p` / `c` / `f`** | Find person / car / door (`find_object`). |
@@ -75,7 +75,7 @@ assist/
 
 ## Controls
 
-- `Space` / `v` — **PTT:** arm listen (mic to Deepgram) / disarm / barge-in while agent speaks
+- **Hold `Space`** — talk while held; release to send. `v` — toggle listen. Barge-in: hold Space while agent speaks
 - `d` / `m` / `p` / `c` / `f` — scene / distance / find (debug shortcuts; unchanged)
 - `q` / `Esc` — quit
 - Speak naturally in English after arming PTT; agent calls tools for meters and scene
